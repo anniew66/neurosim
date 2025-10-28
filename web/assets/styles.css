@@ -1,0 +1,156 @@
+/* Global layout */
+body {
+    font-family: "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: #f8f9fb;
+    margin: 0;
+    padding: 0;
+    color: #333;
+}
+
+.main-container {
+    display: flex;
+    flex-direction: row;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+    background-color: #ffffff;
+    width: 20vw;
+    padding: 20px;
+    border-right: 1px solid #e1e4e8;
+    box-shadow: 2px 0 6px rgba(0, 0, 0, 0.05);
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-title {
+    font-size: 1.3rem;
+    margin-bottom: 10px;
+    color: #1976D2;
+}
+
+.point-controls {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 20px;
+}
+
+.point-row {
+    display: flex;
+    flex-wrap: wrap;
+    height: auto;
+    align-items: center;
+    margin-bottom: 8px;
+    padding: 6px;
+    border-radius: 6px;
+    background-color: #f4f7fa;
+    justify-content: space-between;
+}
+
+.point-id {
+    font-size: 0.8rem;
+    color: #555;
+    width: 50px;
+}
+
+.coord-input {
+    width: 50px;
+    font-size: 0.85rem;
+    padding: 3px 6px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    margin-left: 4px;
+}
+
+.element-input {
+    display: flex;
+    width: 18.9vw;
+    font-size: 0.85rem;
+    padding: 3px 3px;
+    margin-left: 2px;
+}
+
+/* Remove button */
+.button-remove {
+    padding: 8px 14px;
+    font-size: 0.95rem;
+    border: none;
+    border-radius: 8px;
+    background-color: #f44336;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+}
+
+.button-remove:hover {
+    background-color: #d32f2f;
+}
+
+/* Main content */
+.content-area {
+    flex-grow: 1;
+    padding: 30px;
+    overflow: auto;
+}
+
+.title {
+    margin-top: 0;
+    color: #2c3e50;
+}
+
+/* Tabs */
+.tabs-container {
+    margin-top: 10px;
+}
+
+.graph-container {
+    margin-top: 20px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    padding: 10px;
+}
+
+.vector-row {
+    display: flex;
+    align-items: center;
+    margin-left: 12px;
+    margin-bottom: 6px;
+}
+
+.vector-label {
+    width: 70px;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.submit-button {
+    background-color: #42a5f5;
+    border: none;
+    border-radius: 12px;
+    color: white;
+    padding: 14px 10px;
+    cursor: pointer;
+    font-size: 1.3rem;
+    margin-left: 4px;
+    margin-bottom: 18px;
+}
+.submit-button:hover {
+    background-color: #1e88e5;
+}
+
+.small-button {
+    background-color: #42a5f5;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    margin-left: 4px;
+}
+.small-button:hover {
+    background-color: #1e88e5;
+}

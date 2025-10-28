@@ -1,0 +1,10 @@
+name: neurosim
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pandas
+  - pip
+  - pip:
+      - dash
+      - plotly
