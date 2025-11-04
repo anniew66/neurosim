@@ -148,8 +148,9 @@ body {
     color: white;
     padding: 4px 8px;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: 0.66rem;
     margin-left: 4px;
+    margin-top: 2px;
 }
 .small-button:hover {
     background-color: #1e88e5;

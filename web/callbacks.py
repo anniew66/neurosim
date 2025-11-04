@@ -125,9 +125,14 @@ def make_point_inputs(df):
                         className="coord-input",
                     )], style={"display": "flex", "gap": "2"}),
                     html.Div([dcc.Dropdown(id={"type": "element-dd", "axis": "gc", "index": r["id"]}, className="element-input", options=["Granule"], value="Granule"), dcc.Input(id={"type": "time-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Start Time"),dcc.Input(id={"type": "axon-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Axon Promiscuity"),dcc.Input(id={"type": "size-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Soma Size")
-                    , html.Button(
+                    , html.Div([html.Button(
                         "Add Neurite",
                         id={"type": "add-vector", "point_id": r["id"]},
+                        n_clicks=0,
+                        className="small-button",
+                    ), html.Button(
+                        "Remove Neurite", 
+                        id={"type": "remove-vector", "point_id": r["id"]}, 
                         n_clicks=0,
                         className="small-button",
                     ), html.Button(
@@ -135,7 +140,7 @@ def make_point_inputs(df):
                         id={"type": "remove-btn", "point_id": r["id"]},
                         n_clicks=0,
                         className="small-button",
-                    )])
+                    )], style={"display": "flex", "justify-content": "space-between", "margin-right": "6px"})])
                 ],
             )
         )
@@ -208,8 +213,9 @@ def getCallbacks(app):
         Input({"type": "vector-input", "coord": ALL, "point_id": ALL, "vec_index": ALL}, "value"),
         State({"type": "vector-input", "coord": ALL, "point_id": ALL, "vec_index": ALL}, "id"),
         Input({"type": "add-vector", "point_id": ALL}, "n_clicks"),
+        Input({"type": "remove-vector", "point_id": ALL}, "n_clicks"),
     )
-    def update_points(xy_click, yz_click, xz_click, remove_clicks, values, ids, vector_values, vector_ids, vector_add_clicks):
+    def update_points(xy_click, yz_click, xz_click, remove_clicks, values, ids, vector_values, vector_ids, vector_add_clicks, vector_remove_clicks):
         global points_df
         trigger = ctx.triggered_id
         rep_index = 0
@@ -257,7 +263,16 @@ def getCallbacks(app):
                 if not isinstance(vecs, list):
                     vecs = []
                 vecs.append({"theta": 0.0, "phi": 0.0})
-                
+        elif isinstance(trigger, dict) and trigger.get("type") == "remove-vector":
+            print("here3")
+            pid = trigger["point_id"]
+            if pid in points_df["id"].values:
+                vecs = points_df.loc[points_df["id"] == pid, "vectors"].values[0]
+                print("v2", vecs)
+                if not isinstance(vecs, list):
+                    vecs = []
+                if vecs: 
+                    vecs.pop()
 
         elif isinstance(trigger, dict) and trigger.get("type") == "vector-input":
             pid = trigger["point_id"]
