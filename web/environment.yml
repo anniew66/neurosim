@@ -6,6 +6,7 @@ dependencies:
   - pandas
   - pip
   - flask
+  - requests
   - pip:
       - dash
       - plotly

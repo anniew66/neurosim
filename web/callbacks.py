@@ -4,6 +4,8 @@ from dash import Dash, dcc, html, Input, Output, State, ctx, MATCH, ALL
 import plotly.graph_objs as go
 from dash.exceptions import PreventUpdate
 import uuid
+import requests
+import json
 
 points_df = pd.DataFrame(columns=["id", "x", "y", "z", "vectors"])
 
@@ -296,3 +298,18 @@ def getCallbacks(app):
         controls = make_point_inputs(points_df)
 
         return fig_xy, fig_yz, fig_xz, controls
+
+
+    @app.callback(Output("results_container", "data"),
+        Input("run-sim", "n_clicks"),
+        State({"type": "coord-input", "axis": ALL, "point_id": ALL}, "value"),
+        State({"type": "coord-input", "axis": ALL, "point_id": ALL}, "id"),
+        State({"type": "vector-input", "coord": ALL, "point_id": ALL, "vec_index": ALL}, "value"),
+        State({"type": "vector-input", "coord": ALL, "point_id": ALL, "vec_index": ALL}, "id"),
+        prevent_initial_call=True
+        )
+    def send_request(clicks, points, point_ids, neurites, neurite_ids):
+        result = requests.post("http://127.0.0.1:4900/result", json=json.dumps({"points": points, "point_ids": point_ids, "neurites": neurites, "neurite_ids": neurite_ids}))
+        print("here_data", result.text)
+        return {"filename": "download.json", "content": result.text}
+

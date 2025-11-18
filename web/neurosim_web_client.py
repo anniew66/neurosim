@@ -27,7 +27,7 @@ app.layout = html.Div(
         html.Div(
             className="content-area", 
             children=[
-                html.Div([html.H1("Simulation Builder", className="title"), html.Button("Run Simulation", id="run-sim", className="submit-button")], style={"display": "flex", "justify-content": "space-between"}),
+                html.Div([html.H1("Simulation Builder", className="title"), html.Div([dcc.Download(id="results_container"), html.Button("Run Simulation", id="run-sim", className="submit-button")])], style={"display": "flex", "justify-content": "space-between"}),
                 dcc.Tabs(
                     id="plane-tabs",
                     value="xy",
