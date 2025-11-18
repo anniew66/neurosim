@@ -306,9 +306,16 @@ def getCallbacks(app):
         State({"type": "coord-input", "axis": ALL, "point_id": ALL}, "id"),
         State({"type": "vector-input", "coord": ALL, "point_id": ALL, "vec_index": ALL}, "value"),
         State({"type": "vector-input", "coord": ALL, "point_id": ALL, "vec_index": ALL}, "id"),
+        State({"type": "time-input", "index": ALL, "vec_index": ALL}, "value"),
+        State({"type": "element-dd", "index": ALL, "vec_index": ALL}, "value"),
+        State({"type": "axon-input", "index": ALL, "vec_index": ALL}, "value"),
         prevent_initial_call=True
         )
-    def send_request(clicks, points, point_ids, neurites, neurite_ids):
+    def send_request(clicks, points, point_ids, neurites, neurite_ids, time, element, axon):
+        id_list = []
+            
+        [id_list.append(i["point_id"]) for i in point_ids]
+        
         result = requests.post("http://127.0.0.1:4900/result", json=json.dumps({"points": points, "point_ids": point_ids, "neurites": neurites, "neurite_ids": neurite_ids}))
         print("here_data", result.text)
         return {"filename": "download.json", "content": result.text}
