@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Load BioDynaMo environment (update path to match your install)
+# Load BioDynaMo environment 
 if [ -f ~/biodynamo-v1.05.0/bin/thisbdm.sh ]; then
     source ~/biodynamo-v1.05.0/bin/thisbdm.sh
 else
@@ -11,7 +11,6 @@ fi
 
 # Build project
 echo "=== Building granule_growth project ==="
-mkdir -p build
 cd build
 cmake ..
 make -j4

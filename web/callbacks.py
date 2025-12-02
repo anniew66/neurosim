@@ -6,6 +6,7 @@ from dash.exceptions import PreventUpdate
 import uuid
 import requests
 import json
+from collections import Counter
 
 points_df = pd.DataFrame(columns=["id", "x", "y", "z", "vectors"])
 
@@ -313,10 +314,20 @@ def getCallbacks(app):
         )
     def send_request(clicks, points, point_ids, neurites, neurite_ids, time, element, axon):
         id_list = []
-            
-        [id_list.append(i["point_id"]) for i in point_ids]
-        
-        result = requests.post("http://127.0.0.1:4900/result", json=json.dumps({"points": points, "point_ids": point_ids, "neurites": neurites, "neurite_ids": neurite_ids}))
-        print("here_data", result.text)
+        ## Generate dictionary of neuron coords with correct IDs
+        [id_list.append(i["point_id"]) for i in point_ids if i["point_id"] not in id_list]
+        coord_list = [points[i:i+3] for i in range(0, len(points), 3)] 
+        coords = dict(zip(id_list, coord_list))
+        ## Generate dictionary of neurite angles with correct IDs
+        angle_ids = []
+        [angle_ids.append(neurite_ids[i]["point_id"]) for i in range(0, len(neurite_ids), 2)]
+        angle_ids = dict(Counter(angle_ids))
+        angle_list = [neurites[i:i+2] for i in range(0, len(neurites), 2)] 
+        pos = 0
+        angles = {}
+        for k, v in angle_ids.items():
+            angles[k] = angle_list[pos:pos+v]
+            pos = pos + v
+        result = requests.post("http://127.0.0.1:4900/result", json=json.dumps({"neurons": coords, "neurites": angles}))
         return {"filename": "download.json", "content": result.text}
 

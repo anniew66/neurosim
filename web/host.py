@@ -5,7 +5,7 @@ import json
 # Create the Flask application
 app = Flask(__name__)
 
-def create_sim(data):
+#def create_sim(data):
     
 
 # Example route
