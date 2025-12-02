@@ -1,6 +1,5 @@
 // granule_growth.cc
 #include "biodynamo.h"
-#include <cmath>
 
 
 namespace bdm {
