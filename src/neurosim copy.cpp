@@ -3,8 +3,6 @@
 #include <cmath>
 
 
-#define PI 3.14159265358979323846
-
 namespace bdm {
 
 // Parameter group for our simulation
@@ -92,25 +90,15 @@ inline int Simulate(int argc, const char** argv) {
 
   // Create granule soma
   Agent* soma = new Agent();
-    'for each key-value pair (neuron_id: vec3 of coords): 
-        soma -> SetPosition(value)'
-
   soma->SetPosition({0, 0, 0});
-  soma->SetName("GranuleSoma"); // unique name, id probably
+  soma->SetName("GranuleSoma");
   rm->AddAgent(soma);
 
   // Initial neurite element (axon stub)
-  "for each key-value pair (nauron_id: list of two-element lists):
-    make NeuriteElement axon[i]
-    convert to radians each angle
-    dx = cos(theta) * cos(phi)
-    dy = sin(theta) * cos(phi)
-    dz = sin(phi)
-    axon[i] -> SetPosition(soma -> GetPosition() + vec3(dx, dy, dz))"
   NeuriteElement* axon = new NeuriteElement();
   axon->SetPosition(soma->GetPosition() + vec3(0, -1, 0));
-  axon->AddBehavior(new GrowthConeChemotaxis()); // KEEP THIS
-  rm->AddAgent(axon); // KEEP
+  axon->AddBehavior(new GrowthConeChemotaxis());
+  rm->AddAgent(axon);
 
   sim.GetScheduler()->Simulate(5000);
 
