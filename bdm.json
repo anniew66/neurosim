@@ -1,0 +1,10 @@
+{
+  "scheduler": {
+    "simulation_time_step": 1.0
+  },
+  "visualization": {
+    "export_interval": 50,
+    "export": true,
+    "type": "vtk"
+  }
+}
