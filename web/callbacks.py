@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from dash import Dash, dcc, html, Input, Output, State, ctx, MATCH, ALL
+from dash import Dash, dcc, html, Input, Output, State, ctx, MATCH, ALL, callback_context
 import plotly.graph_objs as go
 from dash.exceptions import PreventUpdate
 import uuid
@@ -127,7 +127,14 @@ def make_point_inputs(df):
                         value=round(r["z"], 2),
                         className="coord-input",
                     )], style={"display": "flex", "gap": "2"}),
-                    html.Div([dcc.Dropdown(id={"type": "element-dd", "axis": "gc", "index": r["id"]}, className="element-input", options=["Granule"], value="Granule"), dcc.Input(id={"type": "time-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Start Time"),dcc.Input(id={"type": "axon-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Axon Promiscuity"),dcc.Input(id={"type": "size-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Soma Size")
+                    html.Div([dcc.Dropdown(id={"type": "element-dd", "axis": "gc", "index": r["id"]}, className="element-input", options=["Granule"], value="Granule"), 
+                              dcc.Input(id={"type": "time-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Start Time"),
+                              dcc.Input(id={"type": "axon-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Axon Promiscuity"),
+                              dcc.Input(id={"type": "size-input", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Soma Size"),
+                              dcc.Input(id={"type": "compound-secretion", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Chemicals to be Secreted"),
+                              dcc.Input(id={"type": "secretion-rate", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Secretion Rate"),
+                              dcc.Input(id={"type": "compound-decay", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Compound Decay"),
+                              dcc.Input(id={"type": "synapse-radius", "axis": "gc", "index": r["id"]}, className="coord-input", style={"width": "17.5vw"}, placeholder="Synapse Radius")
                     , html.Div([html.Button(
                         "Add Neurite",
                         id={"type": "add-vector", "point_id": r["id"]},
@@ -310,9 +317,19 @@ def getCallbacks(app):
         State({"type": "time-input", "index": ALL, "vec_index": ALL}, "value"),
         State({"type": "element-dd", "index": ALL, "vec_index": ALL}, "value"),
         State({"type": "axon-input", "index": ALL, "vec_index": ALL}, "value"),
-        prevent_initial_call=True
+        State({"type": "compound-secretion", "index": ALL, "vec_index": ALL}, "value"),
+        State({"type": "secretion-rate", "index": ALL, "vec_index": ALL}, "value"),
+        State({"type": "compound-decay", "index": ALL, "vec_index": ALL}, "value"),
+        State({"type": "synapse-radius", "index": ALL, "vec_index": ALL}, "value"),
+        prevent_initial_call=True, allow_optional = True
         )
-    def send_request(clicks, points, point_ids, neurites, neurite_ids, time, element, axon):
+    def send_request(clicks, points, point_ids, neurites, neurite_ids, time, element, axon,compound, secretion_rate, decay, synapse_radius ):
+        print(callback_context.states)
+        print(secretion_rate, "this is for secretion rate")
+        print(decay)
+        print(element)
+        print(time)
+        
         id_list = []
         ## Generate dictionary of neuron coords with correct IDs
         [id_list.append(i["point_id"]) for i in point_ids if i["point_id"] not in id_list]
@@ -328,6 +345,6 @@ def getCallbacks(app):
         for k, v in angle_ids.items():
             angles[k] = angle_list[pos:pos+v]
             pos = pos + v
-        result = requests.post("http://127.0.0.1:4900/result", json=json.dumps({"neurons": coords, "neurites": angles}))
+        result = requests.post("http://127.0.0.1:4900/result", json=json.dumps({"neurons": coords, "neurites": angles, "neuronType": element }))
         return {"filename": "download.json", "content": result.text}
 
