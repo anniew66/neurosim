@@ -19,7 +19,7 @@ def index():
 def process():
     data = request.json
     print("hi", data, json.loads(data))
-    sim = create_sim(data)
+    #sim = create_sim(data)
     return data
 
 if __name__ == '__main__':

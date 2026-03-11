@@ -1,0 +1,36 @@
+{
+  "neurons": {
+    "9678ff35-6672-4bb1-a34b-0b536cf25afb": {
+      "soma": [-3.56, 4.58, 0],
+      "morphology": "purkinje",
+      "releases": ["BDNF"],
+      "attracts": ["NT3"],
+      "repels":   ["Sema3A"],
+      "neurites": [[0, 0], [22, 22]]
+    },
+    "43c2e755-f86a-41f4-a444-f53423cda40b": {
+      "soma": [-1.53, 4.17, 0],
+      "morphology": "granule",
+      "releases": ["NT3"],
+      "attracts": ["BDNF"],
+      "repels":   [],
+      "neurites": [[0, 0]]
+    }
+  },
+  "global_chemicals": {
+    "BDNF": { "source": [60, 60, 0], "sigma": 40.0, "strength": 1.0 }
+  },
+  "params": {
+    "seed": 1,
+    "extent": 120.0,
+    "step_size": 1.5,
+    "chemotaxis": 3.0,
+    "random_walk": 0.5,
+    "synapse_radius": 3.0,
+    "max_steps": 5000,
+    "run_id": 1,
+    "vtk_dir": "vtk_output",
+    "viz_csv": "simulation_viz.csv",
+    "analysis_csv": "simulation_analysis.csv"
+  }
+}

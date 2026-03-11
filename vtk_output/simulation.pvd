@@ -41,32 +41,5 @@
     <DataSet timestep="38.0" group="" part="0" file="frame_00038.vtu"/>
     <DataSet timestep="39.0" group="" part="0" file="frame_00039.vtu"/>
     <DataSet timestep="40.0" group="" part="0" file="frame_00040.vtu"/>
-    <DataSet timestep="41.0" group="" part="0" file="frame_00041.vtu"/>
-    <DataSet timestep="42.0" group="" part="0" file="frame_00042.vtu"/>
-    <DataSet timestep="43.0" group="" part="0" file="frame_00043.vtu"/>
-    <DataSet timestep="44.0" group="" part="0" file="frame_00044.vtu"/>
-    <DataSet timestep="45.0" group="" part="0" file="frame_00045.vtu"/>
-    <DataSet timestep="46.0" group="" part="0" file="frame_00046.vtu"/>
-    <DataSet timestep="47.0" group="" part="0" file="frame_00047.vtu"/>
-    <DataSet timestep="48.0" group="" part="0" file="frame_00048.vtu"/>
-    <DataSet timestep="49.0" group="" part="0" file="frame_00049.vtu"/>
-    <DataSet timestep="50.0" group="" part="0" file="frame_00050.vtu"/>
-    <DataSet timestep="51.0" group="" part="0" file="frame_00051.vtu"/>
-    <DataSet timestep="52.0" group="" part="0" file="frame_00052.vtu"/>
-    <DataSet timestep="53.0" group="" part="0" file="frame_00053.vtu"/>
-    <DataSet timestep="54.0" group="" part="0" file="frame_00054.vtu"/>
-    <DataSet timestep="55.0" group="" part="0" file="frame_00055.vtu"/>
-    <DataSet timestep="56.0" group="" part="0" file="frame_00056.vtu"/>
-    <DataSet timestep="57.0" group="" part="0" file="frame_00057.vtu"/>
-    <DataSet timestep="58.0" group="" part="0" file="frame_00058.vtu"/>
-    <DataSet timestep="59.0" group="" part="0" file="frame_00059.vtu"/>
-    <DataSet timestep="60.0" group="" part="0" file="frame_00060.vtu"/>
-    <DataSet timestep="61.0" group="" part="0" file="frame_00061.vtu"/>
-    <DataSet timestep="62.0" group="" part="0" file="frame_00062.vtu"/>
-    <DataSet timestep="63.0" group="" part="0" file="frame_00063.vtu"/>
-    <DataSet timestep="64.0" group="" part="0" file="frame_00064.vtu"/>
-    <DataSet timestep="65.0" group="" part="0" file="frame_00065.vtu"/>
-    <DataSet timestep="66.0" group="" part="0" file="frame_00066.vtu"/>
-    <DataSet timestep="67.0" group="" part="0" file="frame_00067.vtu"/>
   </Collection>
 </VTKFile>
