@@ -1,0 +1,443 @@
+/* globals.css */
+@import './theme.css';
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  width: 100%; height: 100%; overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout shell ─────────────────────────────────────────── */
+.app-shell {
+  display: grid;
+  grid-template-rows: var(--toolbar-h) 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr var(--sidebar-w);
+  width: 100vw;
+  height: 100vh;
+}
+
+.app-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-dim);
+  z-index: 10;
+}
+
+.app-toolbar .logo {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  margin-right: 16px;
+}
+
+.app-toolbar .logo span { color: var(--accent-chem); }
+
+.sidebar-left, .sidebar-right {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-dim);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-right { border-right: none; border-left: 1px solid var(--border-dim); }
+
+.canvas-area {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+/* ── Panel primitives ─────────────────────────────────────── */
+.panel-section {
+  border-bottom: 1px solid var(--border-dim);
+  padding: 12px 14px;
+}
+
+.panel-section:last-child { border-bottom: none; }
+
+.panel-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.panel-scroll::-webkit-scrollbar { width: 3px; }
+.panel-scroll::-webkit-scrollbar-track { background: transparent; }
+.panel-scroll::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+
+/* ── Inputs ───────────────────────────────────────────────── */
+.ns-input {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.ns-input:focus { border-color: var(--accent-axon); }
+
+.ns-input-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ns-input-row.three { grid-template-columns: 1fr 1fr 1fr; }
+
+.ns-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* ── Slider ───────────────────────────────────────────────── */
+.ns-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  outline: none;
+  margin: 6px 0;
+}
+
+.ns-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--accent-axon);
+  cursor: pointer;
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 0 6px rgba(41,121,255,0.5);
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+.ns-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-mid);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.ns-btn:hover { background: var(--bg-hover); border-color: var(--border-bright); }
+.ns-btn:active { transform: scale(0.97); }
+
+.ns-btn.primary {
+  background: var(--accent-axon);
+  border-color: var(--accent-axon);
+  color: #fff;
+}
+.ns-btn.primary:hover { background: #1a5bd8; }
+
+.ns-btn.danger {
+  border-color: var(--accent-dend);
+  color: var(--accent-dend);
+}
+.ns-btn.danger:hover { background: rgba(229,57,53,0.1); }
+
+.ns-btn.icon-only {
+  padding: 6px;
+  width: 30px; height: 30px;
+  justify-content: center;
+}
+
+/* ── Toolbar brush pills ──────────────────────────────────── */
+.brush-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border-dim);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.brush-pill:hover { border-color: var(--border-bright); color: var(--text-primary); }
+
+.brush-pill.active[data-brush="neuron"] {
+  background: rgba(79,195,247,0.12);
+  border-color: var(--brush-neuron);
+  color: var(--brush-neuron);
+}
+.brush-pill.active[data-brush="chemical"] {
+  background: rgba(0,229,160,0.12);
+  border-color: var(--brush-chem);
+  color: var(--brush-chem);
+}
+.brush-pill.active[data-brush="erase"] {
+  background: rgba(229,57,53,0.12);
+  border-color: var(--brush-erase);
+  color: var(--brush-erase);
+}
+.brush-pill.active[data-brush="select"] {
+  background: rgba(255,179,0,0.12);
+  border-color: var(--accent-warn);
+  color: var(--accent-warn);
+}
+
+/* ── Status badge ─────────────────────────────────────────── */
+.sim-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border-dim);
+}
+
+.sim-status .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.sim-status.running .dot {
+  background: var(--accent-warn);
+  animation: pulse 1s infinite;
+}
+.sim-status.done .dot { background: var(--accent-chem); }
+.sim-status.error .dot { background: var(--accent-dend); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ── Neuron card ──────────────────────────────────────────── */
+.neuron-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.neuron-card:hover { border-color: var(--border-mid); }
+.neuron-card.selected { border-color: var(--accent-axon); background: var(--bg-active); }
+
+.neuron-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.neuron-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.morphology-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.morphology-badge.purkinje  { background: rgba(79,195,247,0.15); color: #4fc3f7; }
+.morphology-badge.granule   { background: rgba(0,229,160,0.15);  color: #00e5a0; }
+.morphology-badge.basket    { background: rgba(255,179,0,0.15);  color: #ffb300; }
+.morphology-badge.generic   { background: rgba(122,154,181,0.15);color: #7a9ab5; }
+
+/* ── Preset card ──────────────────────────────────────────── */
+.preset-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-dim);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  margin-bottom: 6px;
+  transition: all 0.15s;
+}
+
+.preset-card:hover { border-color: var(--accent-chem); background: var(--bg-hover); }
+
+.preset-icon {
+  width: 32px; height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  background: var(--bg-active);
+  flex-shrink: 0;
+}
+
+.preset-info { flex: 1; min-width: 0; }
+.preset-name { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.preset-desc { font-size: 10px; color: var(--text-secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Divider ──────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--border-dim);
+  margin: 10px 0;
+}
+
+/* ── Overlay HUD ──────────────────────────────────────────── */
+.canvas-hud {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(13,19,24,0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-mid);
+  border-radius: 24px;
+  padding: 6px 14px;
+  pointer-events: none;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.canvas-hud span { color: var(--text-accent); }
+
+/* ── Tooltip ──────────────────────────────────────────────── */
+[data-tooltip] {
+  position: relative;
+}
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--text-primary);
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* ── Select ───────────────────────────────────────────────── */
+.ns-select {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a9ab5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+.ns-select:focus { border-color: var(--accent-axon); }
+
+/* ── Tag list ─────────────────────────────────────────────── */
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: var(--bg-active);
+  border: 1px solid var(--border-mid);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.tag:hover { border-color: var(--accent-dend); color: var(--accent-dend); }
+.tag-add {
+  background: transparent;
+  border: 1px dashed var(--border-mid);
+  color: var(--text-dim);
+}
+.tag-add:hover { border-color: var(--accent-chem); color: var(--accent-chem); }
+
+/* ── Neurite row ──────────────────────────────────────────── */
+.neurite-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-dim);
+}
+.neurite-row:last-child { border-bottom: none; }
+.neurite-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+.neurite-badge.axon   { background: rgba(41,121,255,0.2); color: var(--accent-axon); }
+.neurite-badge.dendrite { background: rgba(229,57,53,0.2); color: var(--accent-dend); }

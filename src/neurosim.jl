@@ -584,17 +584,18 @@ end
 function write_paraview_script(pvd_path, script_path)
     pvd_abs = abspath(pvd_path)
     lines = String[]
+
     push!(lines, "from paraview.simple import *")
-    push!(lines, "from paraview import servermanager")
+    push!(lines, "import sys")
     push!(lines, "")
+    push!(lines, "# ── Load data ────────────────────────────────────────────────────────────")
     push!(lines, "pvd = OpenDataFile(r\"" * pvd_abs * "\")")
     push!(lines, "RenameSource(\'neurosim\', pvd)")
     push!(lines, "")
     push!(lines, "renderView = GetActiveViewOrCreate(\'RenderView\')")
     push!(lines, "renderView.Background = [0.05, 0.05, 0.1]")
     push!(lines, "")
-    push!(lines, "# ── Sphere glyphs for agent nodes ────────────────────────────────────────")
-    push!(lines, "# agent_type: 0=soma(white)  1=axon tip(blue)  2=dendrite tip(red)  3=shaft pt(hidden)")
+    push!(lines, "# ── Sphere glyphs: 0=soma(white) 1=axon(blue) 2=dendrite(red) 3=shaft(grey) ──")
     push!(lines, "sphereSrc = Sphere()")
     push!(lines, "sphereSrc.ThetaResolution = 14")
     push!(lines, "sphereSrc.PhiResolution   = 14")
@@ -606,55 +607,69 @@ function write_paraview_script(pvd_path, script_path)
     push!(lines, "glyphDisp.Representation = \'Surface\'")
     push!(lines, "ColorBy(glyphDisp, (\'POINTS\', \'agent_type\'))")
     push!(lines, "lut = GetColorTransferFunction(\'agent_type\')")
-    push!(lines, "# 0=soma white  1=axon blue  2=dendrite red  3=shaft grey (tiny, mostly hidden)")
     push!(lines, "lut.RGBPoints = [0.0,1.00,1.00,1.00, 1.0,0.17,0.51,0.85, 2.0,0.85,0.15,0.15, 3.0,0.45,0.45,0.45]")
     push!(lines, "lut.ColorSpace = \'RGB\'")
     push!(lines, "glyphDisp.LookupTable = lut")
     push!(lines, "glyphDisp.SetScalarBarVisibility(renderView, True)")
     push!(lines, "")
     push!(lines, "# ── Neurite shafts as tubes ──────────────────────────────────────────────")
-    push!(lines, "# The VTK_POLY_LINE cells trace soma -> shaft points -> growth cone tip.")
-    push!(lines, "# ExtractSurface converts UnstructuredGrid -> PolyData for the Tube filter.")
+    push!(lines, "# ExtractSurface converts vtkUnstructuredGrid -> vtkPolyData for Tube.")
     push!(lines, "surf = ExtractSurface(Input=pvd)")
     push!(lines, "tube = Tube(Input=surf)")
     push!(lines, "tube.Radius = 0.25")
-    push!(lines, "tube.NumberOfSides = 8")
+    push!(lines, "# ParaView spells this differently across versions — try both")
+    push!(lines, "try:")
+    push!(lines, "    tube.NumberofSides = 8")
+    push!(lines, "except AttributeError:")
+    push!(lines, "    try:")
+    push!(lines, "        tube.NumberOfSides = 8")
+    push!(lines, "    except AttributeError:")
+    push!(lines, "        pass  # older ParaView uses the filter default, that is fine")
     push!(lines, "tubeDisp = Show(tube, renderView)")
     push!(lines, "tubeDisp.Representation = \'Surface\'")
-    push!(lines, "# Color axon shafts blue, dendrite shafts red via the same agent_type LUT")
     push!(lines, "ColorBy(tubeDisp, (\'POINTS\', \'agent_type\'))")
     push!(lines, "tubeDisp.LookupTable = lut")
     push!(lines, "tubeDisp.Opacity = 0.75")
     push!(lines, "")
     push!(lines, "# ── Agent ID labels ──────────────────────────────────────────────────────")
-    push!(lines, "# Show the integer agent_id floating next to each agent node.")
-    push!(lines, "# Only label actual agents (agent_id > 0), not shaft interpolation points.")
+    push!(lines, "# Threshold out shaft interpolation points (agent_id == 0) so only")
+    push!(lines, "# real agents get labels. Labels are added via the spreadsheet-style")
+    push!(lines, "# API which is stable across ParaView 5.x and 6.x.")
     push!(lines, "thresh = Threshold(Input=pvd)")
-    push!(lines, "thresh.Scalars = [\'POINTS\', \'agent_id\']")
+    push!(lines, "thresh.Scalars   = [\'POINTS\', \'agent_id\']")
     push!(lines, "thresh.LowerThreshold = 1")
-    push!(lines, "thresh.UpperThreshold = 99999")
-    push!(lines, "labelDisp = Show(thresh, renderView)")
-    push!(lines, "labelDisp.Representation = \'Point Gaussian\'")
-    push!(lines, "labelDisp.GaussianRadius = 0.0   # invisible — labels only")
-    push!(lines, "labelDisp.SelectInputVectors = [\'POINTS\', \'agent_id\']")
-    push!(lines, "labelDisp.SetScalarBarVisibility(renderView, False)")
-    push!(lines, "# Attach text labels")
-    push!(lines, "labelDisp.PointLabelVisibility = True")
-    push!(lines, "labelDisp.PointLabelArrayName  = \'agent_id\'")
-    push!(lines, "labelDisp.PointLabelFontSize   = 10")
-    push!(lines, "labelDisp.PointLabelColor      = [1.0, 1.0, 0.6]")
-    push!(lines, "labelDisp.PointLabelFormat     = \'%d\'")
+    push!(lines, "thresh.UpperThreshold = 999999")
+    push!(lines, "threshDisp = Show(thresh, renderView)")
+    push!(lines, "threshDisp.Representation = \'Point Gaussian\'")
+    push!(lines, "threshDisp.GaussianRadius = 0.001  # effectively invisible points")
+    push!(lines, "threshDisp.SetScalarBarVisibility(renderView, False)")
+    push!(lines, "# Enable point labels through the display properties dict")
+    push!(lines, "try:")
+    push!(lines, "    threshDisp.PointLabelVisibility = 1")
+    push!(lines, "    threshDisp.PointLabelArrayName  = \'agent_id\'")
+    push!(lines, "    threshDisp.PointLabelFontSize   = 9")
+    push!(lines, "    threshDisp.PointLabelColor      = [1.0, 1.0, 0.6]")
+    push!(lines, "    threshDisp.PointLabelFormat     = \'%-#6.0f\'")
+    push!(lines, "except AttributeError:")
+    push!(lines, "    # Labels not supported via script in this ParaView build.")
+    push!(lines, "    # In the GUI: select the threshold source -> Filters -> Label.")
+    push!(lines, "    print(\'Note: point labels not available via script — add manually if needed.\')")
     push!(lines, "")
     push!(lines, "# ── Camera & animation ───────────────────────────────────────────────────")
     push!(lines, "ResetCamera()")
     push!(lines, "animScene = GetAnimationScene()")
     push!(lines, "animScene.UpdateAnimationUsingDataTimeSteps()")
     push!(lines, "Render()")
-    push!(lines, "print(\'neurosim: 0=soma  1=axon  2=dendrite  3=shaft -- Press Play to animate\')")
+    push!(lines, "print(\'\'')")
+    push!(lines, "print(\'neurosim loaded:\')")
+    push!(lines, "print(\'  agent_type  0=soma  1=axon tip  2=dendrite tip  3=neurite shaft\')")
+    push!(lines, "print(\'  Press Play (toolbar) to animate through timesteps.\')")
+    push!(lines, "print(\'  Right-click pipeline entries to toggle visibility.\')")
+    push!(lines, "print(\'\'')")
     push!(lines, "Interact()")
+
     write(script_path, join(lines, "\n") * "\n")
 end
-
 # =============================================================================
 # JSON config parsing
 # =============================================================================
@@ -718,6 +733,12 @@ function build_neuron_record(rng,
                                      Vector{Tuple{Int,SVector{3,Float64}}}()))
     end
 
+    # Guarantee at least one neurite — empty list from client should not crash
+    if isempty(raw_specs)
+        push!(raw_specs, NeuriteSpec(0.0, 0.0, false,
+                                     Vector{Tuple{Int,SVector{3,Float64}}}()))
+    end
+
     # Randomly assign exactly one neurite as the axon
     axon_idx = rand(rng, 1:length(raw_specs))
     neurite_specs = [NeuriteSpec(ns.azimuth_deg, ns.elevation_deg,
@@ -742,6 +763,11 @@ function parse_json_config(json_str::AbstractString)
     if haskey(raw, :growth_cones) || haskey(raw, :gc) || !haskey(raw, :neurons)
         error("""
 Old config format detected.\nDelete or rename config.json and re-run to generate a valid starter config.\n""")
+    end
+
+    # Guard against empty neurons dict
+    if isempty(raw[:neurons])
+        error("neurons object is empty — nothing to simulate.")
     end
 
     first_val  = first(values(raw[:neurons]))
@@ -905,6 +931,9 @@ function init_model(neurons::OrderedDict{String,NeuronRecord},
     # preserving all relative positions. Never magnify a small population.
     margin    = 5.0
     all_pos   = [nr.soma_pos for nr in values(neurons)]
+    if isempty(all_pos)
+        error("No neurons to simulate — neuron list is empty after parsing.")
+    end
     data_min  = SVector{3,Float64}(minimum(p[i] for p in all_pos) for i in 1:3)
     data_max  = SVector{3,Float64}(maximum(p[i] for p in all_pos) for i in 1:3)
     data_span = data_max .- data_min
@@ -982,6 +1011,11 @@ function run_simulation(json_str::AbstractString)
         vtk_dir=vtk_dir)
 
     n_neurons   = length(neurons)
+
+    if n_neurons == 0
+        error("No neurons in config — send at least one neuron.")
+    end
+
     total_gc    = sum(length(nr.neurites) for nr in values(neurons))
     n_axons     = sum(count(ns.is_axon for ns in nr.neurites) for nr in values(neurons))
 

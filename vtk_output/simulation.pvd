@@ -38,8 +38,5 @@
     <DataSet timestep="35.0" group="" part="0" file="frame_00035.vtu"/>
     <DataSet timestep="36.0" group="" part="0" file="frame_00036.vtu"/>
     <DataSet timestep="37.0" group="" part="0" file="frame_00037.vtu"/>
-    <DataSet timestep="38.0" group="" part="0" file="frame_00038.vtu"/>
-    <DataSet timestep="39.0" group="" part="0" file="frame_00039.vtu"/>
-    <DataSet timestep="40.0" group="" part="0" file="frame_00040.vtu"/>
   </Collection>
 </VTKFile>
