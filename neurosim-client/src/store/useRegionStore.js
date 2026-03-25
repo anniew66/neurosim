@@ -14,6 +14,13 @@ function makeRegionName() {
 
 // ── Geometry helpers ──────────────────────────────────────────────────────────
 
+function concatF32(a, b) {
+  const out = new Float32Array(a.length + b.length)
+  out.set(a, 0); out.set(b, a.length)
+  return out
+}
+
+
 /** Indices (into positions/3) of points inside a sphere. */
 function pointsInSphere(positions, cx, cy, cz, radius) {
   const r2  = radius * radius
@@ -110,36 +117,60 @@ const useRegionStore = create((set, get) => ({
 
   // ── Carve: remove points inside sphere from all regions ────────────────────
   // Returns { removedCount } so the caller can give feedback.
+  // Returns patches = [{ regionId, restoredPositions }] for undo recording.
   carveAt(cx, cy, cz, radius) {
-    let removedCount = 0
+    const patches = []
     set(s => ({
       regions: s.regions
         .map(r => {
           const hits = pointsInSphere(r.positions, cx, cy, cz, radius)
           if (hits.length === 0) return r
-          removedCount += hits.length
-          const next = removeIndices(r.positions, hits)
-          return { ...r, positions: next }
+          patches.push({ regionId: r.id, restoredPositions: extractIndices(r.positions, hits) })
+          return { ...r, positions: removeIndices(r.positions, hits) }
         })
-        .filter(r => r.positions.length >= 3),   // drop empty regions
+        .filter(r => r.positions.length >= 3),
     }))
-    return removedCount
+    return patches
   },
+
+  // Restore carved positions back into their regions (undo CARVE / PROMOTE).
+  restoreCarvePatches(patches) {
+    if (!patches || patches.length === 0) return
+    set(s => {
+      const byId = Object.fromEntries(s.regions.map(r => [r.id, { ...r }]))
+      for (const { regionId, restoredPositions } of patches) {
+        if (byId[regionId]) {
+          byId[regionId].positions = concatF32(byId[regionId].positions, restoredPositions)
+        }
+      }
+      return { regions: s.regions.map(r => byId[r.id] ?? r) }
+    })
+  },
+
+  // Restore full region list (undo CLEAR)
+  restoreState(regions) {
+    set({ regions: regions.map(r => ({ ...r })), selectedRegionId: null })
+  },
+
+  exportSnapshot() { return get().regions.map(r => ({ ...r })) },
 
   // ── Promote: carve out a sub-sphere and return it as precise neurons ────────
   // Returns array of {soma, morphology, ...} records ready for useSceneStore.
   // Removes those points from their source region.
+  // Returns { neurons, patches } for undo recording.
+  // neurons = precise neuron records to add; patches = carve info to restore on undo.
   promoteAt(cx, cy, cz, radius) {
-    const promoted = []
+    const neurons  = []
+    const patches  = []
     set(s => ({
       regions: s.regions
         .map(r => {
           const hits = pointsInSphere(r.positions, cx, cy, cz, radius)
           if (hits.length === 0) return r
           const extracted = extractIndices(r.positions, hits)
-          const defaults  = getDefaults(r.morphology)
+          patches.push({ regionId: r.id, restoredPositions: extracted })
           for (let i = 0; i < extracted.length / 3; i++) {
-            promoted.push({
+            neurons.push({
               id:             crypto.randomUUID(),
               soma:           [extracted[i*3], extracted[i*3+1], extracted[i*3+2]],
               morphology:     r.morphology,
@@ -159,7 +190,7 @@ const useRegionStore = create((set, get) => ({
         })
         .filter(r => r.positions.length >= 3),
     }))
-    return promoted
+    return { neurons, patches }
   },
 
   // ── Selection ───────────────────────────────────────────────────────────────

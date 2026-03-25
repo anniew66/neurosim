@@ -1,5 +1,7 @@
 // App.jsx
 import { Suspense } from 'react'
+import useSimStore          from './store/useSimStore.js'
+import useTissueDensityStore from './store/useTissueDensityStore.js'
 import Toolbar      from './components/ui/Toolbar.jsx'
 import LeftSidebar  from './components/panels/LeftSidebar.jsx'
 import RightSidebar from './components/panels/RightSidebar.jsx'

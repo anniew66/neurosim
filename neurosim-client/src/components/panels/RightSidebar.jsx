@@ -25,19 +25,15 @@ export default function RightSidebar() {
 
   return (
     <aside className="sidebar-right">
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border-dim)', flexShrink: 0 }}>
+      <div className="tab-strip">
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            flex: 1, padding: '10px 0', background: 'none', border: 'none',
-            borderBottom: tab === t.id ? '2px solid var(--accent-chem)' : '2px solid transparent',
-            color: tab === t.id ? 'var(--text-primary)' : 'var(--text-dim)',
-            fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600,
-            cursor: 'pointer', transition: 'all 0.15s', letterSpacing: '0.04em',
-          }}>
+          <button key={t.id} className={`tab-btn ${tab === t.id ? 'active' : ''}`}
+            onClick={() => setTab(t.id)}>
             {t.label}
             {t.id === 'inspector' && hasSelection && (
-              <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%',
-                             background: 'var(--accent-warn)', marginLeft: 5, verticalAlign: 'middle' }} />
+              <span style={{ display: 'inline-block', width: 5, height: 5,
+                             borderRadius: '50%', background: 'var(--accent-amber)',
+                             marginLeft: 5, verticalAlign: 'middle' }} />
             )}
           </button>
         ))}

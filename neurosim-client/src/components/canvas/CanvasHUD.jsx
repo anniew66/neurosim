@@ -1,21 +1,21 @@
 // components/canvas/CanvasHUD.jsx
-// Minimal viewport overlay: neuron counts, cursor world position, active brush, hints.
-// Paint plane Y control removed — now lives in the Surface panel (left sidebar).
+// Viewport overlay: stats, magnification control, hints.
 
-import useSceneStore        from '../../store/useSceneStore.js'
-import useRegionStore       from '../../store/useRegionStore.js'
-import useBrushStore        from '../../store/useBrushStore.js'
+import useSceneStore    from '../../store/useSceneStore.js'
+import useRegionStore   from '../../store/useRegionStore.js'
+import useBrushStore    from '../../store/useBrushStore.js'
 import usePaintSurfaceStore from '../../store/usePaintSurfaceStore.js'
+import useDisplayStore  from '../../store/useDisplayStore.js'
 import { SURFACE_PRESETS }  from '../../lib/surfaceMath.js'
 
-const MODE_LABELS = {
-  point:   { symbol: '·',  color: 'var(--brush-neuron)' },
-  area:    { symbol: '⬤',  color: 'var(--brush-neuron)' },
-  carve:   { symbol: '◌',  color: 'var(--brush-erase)'  },
-  promote: { symbol: '↑',  color: 'var(--accent-warn)'  },
-  erase:   { symbol: '✕',  color: 'var(--brush-erase)'  },
-  select:  { symbol: '◎',  color: 'var(--accent-warn)'  },
-  chemical:{ symbol: '◈',  color: 'var(--brush-chem)'   },
+const MODE_SYMBOLS = {
+  point:   '·',
+  area:    '■',
+  carve:   '○',
+  promote: '↑',
+  erase:   '×',
+  select:  '◇',
+  chemical:'◈',
 }
 
 export default function CanvasHUD() {
@@ -24,45 +24,99 @@ export default function CanvasHUD() {
   const cursorPos   = useBrushStore(s => s.cursorPos)
   const mode        = useBrushStore(s => s.mode)
   const surfaceType = usePaintSurfaceStore(s => s.surfaceType)
-  const modeInfo    = MODE_LABELS[mode] ?? MODE_LABELS.area
+  const displayMag  = useDisplayStore(s => s.displayMagnification)
+  const setDisplayMag = useDisplayStore(s => s.setDisplayMagnification)
   const surfaceDef  = SURFACE_PRESETS[surfaceType]
+
+  const totalNeurons = neurons.length + bulkCount
 
   return (
     <>
-      {/* Bottom center HUD */}
+      {/* Bottom-centre status bar */}
       <div className="canvas-hud" style={{ pointerEvents: 'none' }}>
-        <span style={{ color: modeInfo.color, fontSize: 14 }}>{modeInfo.symbol}</span>
-        <span style={{ color: 'var(--text-dim)' }}>·</span>
-        <span style={{ color: 'var(--text-secondary)' }}>neurons</span>
-        <span>{(neurons.length + bulkCount).toLocaleString()}</span>
-        <span style={{ color: 'var(--text-dim)' }}>·</span>
-        <span style={{ color: 'var(--text-secondary)' }}>surface</span>
-        <span style={{ color: 'var(--accent-axon)' }}>
-          {surfaceDef?.icon} {surfaceDef?.label}
+        <span style={{ color: 'var(--text-dim)' }}>{MODE_SYMBOLS[mode] ?? '·'}</span>
+        <span style={{ color: 'var(--text-dim)', margin: '0 2px' }}>|</span>
+        <span>neurons</span>
+        <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+          {totalNeurons.toLocaleString()}
+        </span>
+        <span style={{ color: 'var(--text-dim)', margin: '0 2px' }}>|</span>
+        <span>surface</span>
+        <span style={{ color: 'var(--text-primary)' }}>
+          {surfaceDef?.label ?? surfaceType}
         </span>
         {cursorPos && (
           <>
-            <span style={{ color: 'var(--text-dim)' }}>·</span>
-            <span style={{ color: 'var(--text-secondary)' }}>xyz</span>
+            <span style={{ color: 'var(--text-dim)', margin: '0 2px' }}>|</span>
             <span>
-              {cursorPos[0].toFixed(1)}, {cursorPos[1].toFixed(1)}, {cursorPos[2].toFixed(1)}
+              {cursorPos[0].toFixed(3)},&nbsp;
+              {cursorPos[1].toFixed(3)},&nbsp;
+              {cursorPos[2].toFixed(3)}&nbsp;mm
             </span>
           </>
         )}
       </div>
 
-      {/* Top-left hints */}
+      {/* Top-right: magnification control */}
       <div style={{
-        position: 'absolute', top: 12, left: 12,
-        background: 'rgba(13,19,24,0.75)', backdropFilter: 'blur(6px)',
-        border: '1px solid var(--border-dim)', borderRadius: 'var(--radius-md)',
-        padding: '6px 10px', fontSize: 10, fontFamily: 'var(--font-mono)',
-        color: 'var(--text-dim)', lineHeight: 1.8, pointerEvents: 'none',
+        position: 'absolute', top: 10, right: 10,
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-strong)',
+        borderRadius: 'var(--radius-sm)',
+        padding: '6px 10px',
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontSize: 11, fontFamily: 'var(--font-mono)',
+        color: 'var(--text-secondary)',
+        boxShadow: 'var(--shadow-sm)',
+        zIndex: 5,
       }}>
-        <div><span style={{ color: 'var(--text-secondary)' }}>LMB</span> paint</div>
-        <div><span style={{ color: 'var(--text-secondary)' }}>Shift+LMB</span> place control point</div>
-        <div><span style={{ color: 'var(--text-secondary)' }}>RMB / MMB</span> orbit</div>
-        <div><span style={{ color: 'var(--text-secondary)' }}>P A C O E S</span> switch brush</div>
+        <span style={{ color: 'var(--text-dim)', fontSize: 10,
+                        textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Display ×
+        </span>
+        <input type="range" className="ns-slider"
+          min={0} max={1} step={0.001}
+          value={Math.log10(displayMag) / Math.log10(200)}
+          onChange={e => {
+            const frac = Number(e.target.value)
+            setDisplayMag(Math.pow(10, frac * Math.log10(200)))
+          }}
+          style={{ width: 90, pointerEvents: 'all' }}
+        />
+        <input
+          type="number"
+          className="ns-input"
+          value={displayMag.toFixed(1)}
+          onChange={e => {
+            const v = parseFloat(e.target.value)
+            if (!isNaN(v) && v > 0) setDisplayMag(v)
+          }}
+          style={{ width: 54, pointerEvents: 'all', fontSize: 11, textAlign: 'right' }}
+        />
+      </div>
+
+      {/* Top-left: key hints */}
+      <div style={{
+        position: 'absolute', top: 10, left: 10,
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-strong)',
+        borderRadius: 'var(--radius-sm)',
+        padding: '5px 9px',
+        fontSize: 10, fontFamily: 'var(--font-mono)',
+        color: 'var(--text-dim)', lineHeight: 1.9,
+        pointerEvents: 'none',
+        boxShadow: 'var(--shadow-sm)',
+      }}>
+        <div>
+          <span style={{ color: 'var(--text-secondary)' }}>LMB</span> paint
+          &nbsp;&nbsp;
+          <span style={{ color: 'var(--text-secondary)' }}>Shift+LMB</span> ctrl point
+        </div>
+        <div>
+          <span style={{ color: 'var(--text-secondary)' }}>RMB/MMB</span> orbit
+          &nbsp;&nbsp;
+          <span style={{ color: 'var(--text-secondary)' }}>P A C O E S</span> brush
+        </div>
       </div>
     </>
   )

@@ -1,39 +1,50 @@
 // store/useSimStore.js
-// Tracks the simulation run lifecycle: idle → running → done / error.
-// Also holds the last result summary returned by the Julia server.
 
 import { create } from 'zustand'
 import { runSimulation, checkHealth } from '../lib/simApi.js'
-import useRegionStore from './useRegionStore.js'
-import useSceneStore from './useSceneStore.js'
+import useSceneStore  from './useSceneStore.js'
+import useRegionStore        from './useRegionStore.js'
+import useTissueDensityStore from './useTissueDensityStore.js'
 
 const useSimStore = create((set, get) => ({
-  // ── State ──────────────────────────────────────────────────────────────────
-  status:       'idle',   // 'idle' | 'running' | 'done' | 'error'
-  result:       null,     // last successful result from Julia
-  error:        null,     // last error message string
-  serverOnline: null,     // null = unknown, true/false
+  status:       'idle',
+  result:       null,
+  error:        null,
+  serverOnline: null,
 
-  // ── Global sim params (mirrors Julia params block) ─────────────────────────
+  // ── Global sim params — all spatial values in mm ───────────────────────────
   params: {
-    seed:           1,
-    extent:         120.0,
-    step_size:      1.5,
-    chemotaxis:     3.0,
-    random_walk:    0.5,
-    synapse_radius: 3.0,
-    max_steps:      5000,
-    run_id:         1,
-    vtk_dir:        'vtk_output',
-    viz_csv:        'simulation_viz.csv',
-    analysis_csv:   'simulation_analysis.csv',
+    seed:                1,
+    extent:              1.0,      // mm — default 1 mm cubic volume
+    step_size:           0.003,    // mm — 3 µm per step
+    chemotaxis:          3.0,
+    random_walk:         0.5,
+    synapse_radius:      0.003,    // mm — 3 µm contact zone
+    max_steps:           5000,
+    run_id:              1,
+    vtk_dir:             'vtk_output',
+    viz_csv:             'simulation_viz.csv',
+    analysis_csv:        'simulation_analysis.csv',
+    health_decay_rate:   0.0002,   // per step
+    death_threshold:     0.05,     // health below this → neuron dies
+    synapse_health_boost:0.4,      // health added per synapse formed
+    // Electrical/structural timing
+    n_struct:            100,          // electrical steps per structural step
+    // BCM plasticity (global scale — per-morphology in Julia)
+    eta_bcm:             0.0005,
+    gamma_decay:         0.0008,
+    // Pruning
+    prune_delay:         5000,
   },
 
   updateParam(key, value) {
     set(s => ({ params: { ...s.params, [key]: value } }))
+    // Keep density grid in sync with sim extent
+    if (key === 'extent') {
+      useTissueDensityStore.getState().syncToExtent(value)
+    }
   },
 
-  // ── Actions ────────────────────────────────────────────────────────────────
   async run() {
     if (get().status === 'running') return
     const { neurons: preciseNeurons, chemicals } = useSceneStore.getState().exportScene()
@@ -47,7 +58,9 @@ const useSimStore = create((set, get) => ({
 
     set({ status: 'running', result: null, error: null })
     try {
-      const result = await runSimulation(preciseNeurons, regionNeurons, chemicals, get().params)
+      const densStore = useTissueDensityStore.getState()
+      const tissueDensity = densStore.isEmpty() ? null : densStore.exportForJulia()
+      const result = await runSimulation(preciseNeurons, regionNeurons, chemicals, get().params, tissueDensity)
       set({ status: 'done', result })
     } catch (e) {
       set({ status: 'error', error: e.message })

@@ -1,7 +1,7 @@
 // components/canvas/SceneCanvas.jsx
-// R3F canvas. Brush routing for all six modes.
-// Paint plane replaced with parametric surface — raycasting uses bisection.
-// Shift+Click places RBF control points (custom surface mode).
+// Brush routing for all six modes.
+// After each committed action, pushes an undo entry to useHistoryStore.
+// Pan: middle-mouse drag. Orbit: right-mouse drag. Scroll: zoom.
 
 import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei'
@@ -13,14 +13,17 @@ import NeuronCloud   from './NeuronCloud.jsx'
 import RegionCloud   from './RegionCloud.jsx'
 import ChemicalField from './ChemicalField.jsx'
 import BrushCursor   from './BrushCursor.jsx'
-import PaintSurface  from './PaintSurface.jsx'
+import PaintSurface        from './PaintSurface.jsx'
+import DensityCloud        from './DensityCloud.jsx'
 
 import useBrushStore        from '../../store/useBrushStore.js'
 import useSceneStore        from '../../store/useSceneStore.js'
 import useRegionStore       from '../../store/useRegionStore.js'
 import usePaintSurfaceStore from '../../store/usePaintSurfaceStore.js'
+import useHistoryStore       from '../../store/useHistoryStore.js'
+import useTissueDensityStore from '../../store/useTissueDensityStore.js'
 import { getDefaults }      from '../../lib/neuronDefaults.js'
-import { raySurfaceIntersect, evalHeight, evalNormal } from '../../lib/surfaceMath.js'
+import { raySurfaceIntersect, evalHeight } from '../../lib/surfaceMath.js'
 
 // ── Sphere sampling ───────────────────────────────────────────────────────────
 const SPHERE_VOL = r => (4 / 3) * Math.PI * r ** 3
@@ -53,31 +56,25 @@ function SceneInner() {
   const { camera, gl, raycaster, pointer } = useThree()
   const orbitRef = useRef()
 
-  // Brush
-  const mode         = useBrushStore(s => s.mode)
-  const brushRadius  = useBrushStore(s => s.brushRadius)
-  const setCursorPos = useBrushStore(s => s.setCursorPos)
+  const mode          = useBrushStore(s => s.mode)
+  const setCursorPos  = useBrushStore(s => s.setCursorPos)
   const setIsPainting = useBrushStore(s => s.setIsPainting)
 
-  // Scene actions
-  const addNeurons   = useSceneStore(s => s.addNeurons)
-  const addChemicals = useSceneStore(s => s.addChemicals)
-  const eraseAt      = useSceneStore(s => s.eraseAt)
-  const addRegion    = useRegionStore(s => s.addRegion)
-  const carveAt      = useRegionStore(s => s.carveAt)
-  const promoteAt    = useRegionStore(s => s.promoteAt)
-
-  // Surface
+  const addNeurons    = useSceneStore(s => s.addNeurons)
+  const addChemicals  = useSceneStore(s => s.addChemicals)
+  const eraseAt       = useSceneStore(s => s.eraseAt)
+  const addRegion     = useRegionStore(s => s.addRegion)
+  const carveAt       = useRegionStore(s => s.carveAt)
+  const promoteAt     = useRegionStore(s => s.promoteAt)
+  const pushHistory   = useHistoryStore(s => s.push)
   const addControlPoint = usePaintSurfaceStore(s => s.addControlPoint)
 
-  // Stroke buffer for area brush
   const strokeBuffer = useRef(new Float32Array(0))
   const lastDabPos   = useRef(null)
+  const brushRef     = useRef({})
+  const surfaceRef   = useRef({})
 
-  // Stable ref for brush settings
-  const brushRef   = useRef({})
-  const surfaceRef = useRef({})
-
+  // Keep stable refs so event handlers always see current values
   useEffect(() => {
     const unsub = useBrushStore.subscribe(s => {
       brushRef.current = {
@@ -86,24 +83,18 @@ function SceneInner() {
         neuriteCount: s.neuriteCount, chemical: s.chemical,
       }
     })
+    const s = useBrushStore.getState()
     brushRef.current = {
-      mode, brushRadius,
-      density:      useBrushStore.getState().density,
-      jitterAmount: useBrushStore.getState().jitterAmount,
-      morphology:   useBrushStore.getState().morphology,
-      neuriteCount: useBrushStore.getState().neuriteCount,
-      chemical:     useBrushStore.getState().chemical,
+      mode: s.mode, brushRadius: s.brushRadius, density: s.density,
+      jitterAmount: s.jitterAmount, morphology: s.morphology,
+      neuriteCount: s.neuriteCount, chemical: s.chemical,
     }
     return unsub
   }, [])
 
   useEffect(() => {
     const unsub = usePaintSurfaceStore.subscribe(s => {
-      surfaceRef.current = {
-        surfaceType:   s.surfaceType,
-        params:        s.params,
-        controlPoints: s.controlPoints,
-      }
+      surfaceRef.current = { surfaceType: s.surfaceType, params: s.params, controlPoints: s.controlPoints }
     })
     const s = usePaintSurfaceStore.getState()
     surfaceRef.current = { surfaceType: s.surfaceType, params: s.params, controlPoints: s.controlPoints }
@@ -111,78 +102,120 @@ function SceneInner() {
   }, [])
 
   // ── Surface raycast ─────────────────────────────────────────────────────────
+  // All brush modes — including density — use the same parametric surface.
+  // Falls back to a horizontal plane at y=0 if the surface ray misses.
   const solveSurface = useCallback(() => {
     raycaster.setFromCamera(pointer, camera)
     const { origin, direction } = raycaster.ray
     const { surfaceType, params, controlPoints } = surfaceRef.current
 
     const result = raySurfaceIntersect(
-      origin.x,    origin.y,    origin.z,
+      origin.x, origin.y, origin.z,
       direction.x, direction.y, direction.z,
       surfaceType, params, controlPoints,
     )
-    return result ? result.point : null
+    if (result) return result.point
+
+    // Fallback: flat horizontal plane at y=0
+    if (Math.abs(direction.y) > 1e-6) {
+      const t = -origin.y / direction.y
+      if (t > 0) return [
+        origin.x + t * direction.x,
+        0,
+        origin.z + t * direction.z,
+      ]
+    }
+    return null
   }, [camera, raycaster, pointer])
 
-  // ── Track cursor every frame ────────────────────────────────────────────────
   useFrame(() => {
     const hit = solveSurface()
     setCursorPos(hit ?? null)
   })
 
-  // ── Apply one dab ───────────────────────────────────────────────────────────
+  // ── Apply one dab + record undo ───────────────────────────────────────────
   function applyDab(point, b, shiftKey) {
     const [cx, cy, cz] = point
     const { surfaceType, params, controlPoints } = surfaceRef.current
 
-    // Shift+click places RBF control point (custom surface only)
     if (shiftKey && surfaceType === 'custom') {
-      const baseY = evalHeight(cx, cz, 'flat', params, [])
-      addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
+addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       return
     }
 
     switch (b.mode) {
       case 'area': {
+        // Accumulate only — commit on pointerup
         const pts = sampleSphere(cx, cy, cz, b.brushRadius, b.density, b.jitterAmount)
         strokeBuffer.current = concatF32(strokeBuffer.current, pts)
         break
       }
+
       case 'point': {
         const defaults = getDefaults(b.morphology)
-        addNeurons([{
+        const neuron = {
           id: crypto.randomUUID(), soma: [cx, cy, cz],
-          morphology: b.morphology,
-          releases:   [...defaults.releases],
-          attracts:   [...defaults.attracts],
-          repels:     [...defaults.repels],
+          morphology:     b.morphology,
+          soma_radius:    defaults.soma_radius,
+          releases:       [...defaults.releases],
+          attracts:       [...defaults.attracts],
+          repels:         [...defaults.repels],
           branch_prob:    defaults.branch_prob,
           max_branch_len: defaults.max_branch_length,
           neurites: Array.from({ length: Math.max(1, b.neuriteCount) }, (_, i) => ({
             azimuth:   (i / Math.max(1, b.neuriteCount)) * 360,
             elevation: (Math.random() - 0.5) * 60,
           })),
-        }])
+        }
+        addNeurons([neuron])
+        pushHistory({ type: 'ADD_PRECISE', neuronIds: [neuron.id] })
         break
       }
-      case 'chemical':
-        addChemicals([{
+
+      case 'chemical': {
+        const chem = {
           id: crypto.randomUUID(), name: b.chemical.name, source: [cx, cy, cz],
           sigma: b.chemical.sigma, strength: b.chemical.strength,
-        }])
-        break
-      case 'erase':
-        eraseAt([cx, cy, cz], b.brushRadius)
-        carveAt(cx, cy, cz, b.brushRadius)
-        break
-      case 'carve':
-        carveAt(cx, cy, cz, b.brushRadius)
-        break
-      case 'promote': {
-        const neurons = promoteAt(cx, cy, cz, b.brushRadius)
-        if (neurons.length > 0) addNeurons(neurons)
+        }
+        addChemicals([chem])
+        pushHistory({ type: 'ADD_CHEMICALS', chemIds: [chem.id] })
         break
       }
+
+      case 'erase': {
+        const { deletedNeurons, deletedChemicals } = eraseAt([cx, cy, cz], b.brushRadius)
+        const patches = carveAt(cx, cy, cz, b.brushRadius)
+        const actions = []
+        if (deletedNeurons.length)   actions.push({ type: 'REMOVE_PRECISE',   neurons: deletedNeurons })
+        if (deletedChemicals.length) actions.push({ type: 'REMOVE_CHEMICALS', chemicals: deletedChemicals })
+        if (patches.length)          actions.push({ type: 'CARVE_REGIONS',    patches })
+        if (actions.length === 1) pushHistory(actions[0])
+        else if (actions.length > 1) pushHistory({ type: 'COMPOSITE', actions })
+        break
+      }
+
+      case 'carve': {
+        const patches = carveAt(cx, cy, cz, b.brushRadius)
+        if (patches.length > 0) pushHistory({ type: 'CARVE_REGIONS', patches })
+        break
+      }
+
+      case 'promote': {
+        const { neurons, patches } = promoteAt(cx, cy, cz, b.brushRadius)
+        if (neurons.length > 0) {
+          addNeurons(neurons)
+          pushHistory({ type: 'PROMOTE', neuronIds: neurons.map(n => n.id), patches })
+        }
+        break
+      }
+
+      case 'density': {
+        // Paint or erase density depending on brushDensity sign
+        const densStore = useTissueDensityStore.getState()
+        densStore.paint(cx, cy, cz, b.brushRadius)
+        break
+      }
+
       default: break
     }
   }
@@ -200,7 +233,6 @@ function SceneInner() {
       setIsPainting(true)
       strokeBuffer.current = new Float32Array(0)
       lastDabPos.current   = null
-
       const hit = solveSurface()
       if (hit) applyDab(hit, b, e.shiftKey)
     }
@@ -210,12 +242,13 @@ function SceneInner() {
       const b   = brushRef.current
       const hit = solveSurface()
       if (!hit) return
-
-      if (lastDabPos.current) {
-        const dx = hit[0] - lastDabPos.current[0]
-        const dz = hit[2] - lastDabPos.current[2]
-        const minD2 = b.brushRadius * b.brushRadius * 0.15
-        if (dx*dx + dz*dz < minD2) return
+      // Density brush: no distance gate — paint continuously as cursor moves
+      if (b.mode !== 'density') {
+        if (lastDabPos.current) {
+          const dx = hit[0] - lastDabPos.current[0]
+          const dz = hit[2] - lastDabPos.current[2]
+          if (dx*dx + dz*dz < b.brushRadius * b.brushRadius * 0.15) return
+        }
       }
       lastDabPos.current = [...hit]
       applyDab(hit, b, e.shiftKey)
@@ -227,11 +260,15 @@ function SceneInner() {
 
       const b = brushRef.current
       if (b.mode === 'area' && strokeBuffer.current.length >= 3) {
-        addRegion(strokeBuffer.current, {
-          morphology:   b.morphology,
-          neuriteCount: b.neuriteCount,
+        const positions = strokeBuffer.current
+        addRegion(positions, {
+          morphology: b.morphology, neuriteCount: b.neuriteCount,
           releases: null, attracts: null, repels: null,
         })
+        // Get the ID of the just-added region (last one in the store)
+        const regions = useRegionStore.getState().regions
+        const newRegion = regions[regions.length - 1]
+        if (newRegion) pushHistory({ type: 'ADD_REGION', regionId: newRegion.id })
         strokeBuffer.current = new Float32Array(0)
       }
     }
@@ -251,26 +288,34 @@ function SceneInner() {
     <>
       <ambientLight intensity={0.4} />
       <directionalLight position={[8, 12, 6]}  intensity={1.2} castShadow />
-      <directionalLight position={[-6, 4, -8]} intensity={0.3} color="#4fc3f7" />
+      <directionalLight position={[-6, 4, -8]} intensity={0.3} color="#4a90d9" />
 
       <SceneGrid />
       <PaintSurface />
       <NeuronCloud />
       <RegionCloud />
+      <DensityCloud />
       <ChemicalField />
       <BrushCursor />
 
-      <OrbitControls ref={orbitRef} makeDefault enableDamping dampingFactor={0.08}
-        maxDistance={120} minDistance={1}
+      <OrbitControls
+        ref={orbitRef}
+        makeDefault
+        enableDamping
+        dampingFactor={0.08}
+        maxDistance={200}
+        minDistance={0.0001}
+        enablePan
+        panSpeed={1.2}
         mouseButtons={{
           LEFT:   mode === 'select' ? THREE.MOUSE.ROTATE : undefined,
-          MIDDLE: THREE.MOUSE.DOLLY,
-          RIGHT:  THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.PAN,    // middle-mouse drag = pan
+          RIGHT:  THREE.MOUSE.ROTATE, // right-mouse drag = orbit
         }}
       />
 
       <GizmoHelper alignment="bottom-right" margin={[60, 60]}>
-        <GizmoViewport axisColors={['#e53935', '#00e5a0', '#2979ff']} labelColor="#e8f0f8" />
+        <GizmoViewport axisColors={['#c0392b', '#38a169', '#2b6cb0']} labelColor="#f0f0f0" />
       </GizmoHelper>
     </>
   )
@@ -278,9 +323,12 @@ function SceneInner() {
 
 export default function SceneCanvas() {
   return (
-    <Canvas camera={{ position: [0, 14, 20], fov: 50, near: 0.1, far: 500 }}
-      gl={{ antialias: true, alpha: false }} shadows style={{ background: '#080c10' }}>
-      <fog attach="fog" args={['#080c10', 60, 160]} />
+    <Canvas
+      camera={{ position: [0, 0.5, 1.0], fov: 50, near: 0.00001, far: 500 }}
+      gl={{ antialias: true, alpha: false }}
+      shadows
+      style={{ background: '#1c1c1c' }}
+    >
       <SceneInner />
     </Canvas>
   )

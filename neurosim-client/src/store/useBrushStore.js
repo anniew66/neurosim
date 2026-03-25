@@ -10,7 +10,7 @@ const useBrushStore = create((set) => ({
   // promote — drag sphere to pull bulk positions into precise neurons
   // erase   — removes precise neurons under cursor
   // select  — click to select precise neuron or region
-  mode: 'area',
+  mode: 'area',   // point|area|carve|promote|erase|select|density
 
   // ── Shared geometry ────────────────────────────────────────────────────────
   brushRadius:  2.0,
@@ -47,6 +47,10 @@ const useBrushStore = create((set) => ({
   setChemical(patch)    { set(s => ({ chemical: { ...s.chemical, ...patch } })) },
   setCursorPos(pos)     { set({ cursorPos: pos }) },
   setIsPainting(v)      { set({ isPainting: v }) },
+
+  // Density brush value (0-1)
+  densityValue:     0.6,
+  setDensityValue(v){ set({ densityValue: v }) },
 }))
 
 export default useBrushStore

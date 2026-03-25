@@ -4,46 +4,55 @@ import { useEffect } from 'react'
 import useBrushStore  from '../../store/useBrushStore.js'
 import useSimStore    from '../../store/useSimStore.js'
 import useSceneStore  from '../../store/useSceneStore.js'
-import useRegionStore from '../../store/useRegionStore.js'
+import useRegionStore   from '../../store/useRegionStore.js'
+import useHistoryStore  from '../../store/useHistoryStore.js'
+
 
 const BRUSHES = [
-  { id: 'point',   label: 'Point',   icon: '·',  key: 'p', tip: 'Place single precise neuron' },
-  { id: 'area',    label: 'Area',    icon: '⬤',  key: 'a', tip: 'Paint bulk neuron region' },
-  { id: 'carve',   label: 'Carve',   icon: '◌',  key: 'c', tip: 'Erase bulk region positions' },
-  { id: 'promote', label: 'Promote', icon: '↑',  key: 'o', tip: 'Extract bulk → precise neurons' },
-  { id: 'erase',   label: 'Erase',   icon: '✕',  key: 'e', tip: 'Erase precise neurons' },
-  { id: 'select',  label: 'Select',  icon: '◎',  key: 's', tip: 'Select neuron or region' },
+  { id: 'point',   label: 'Point',   key: 'p', tip: 'Place single precise neuron [P]' },
+  { id: 'area',    label: 'Area',    key: 'a', tip: 'Paint bulk neuron region [A]' },
+  { id: 'carve',   label: 'Carve',   key: 'c', tip: 'Erase from bulk region [C]' },
+  { id: 'promote', label: 'Promote', key: 'o', tip: 'Extract bulk → precise [O]' },
+  { id: 'erase',   label: 'Erase',   key: 'e', tip: 'Remove precise neurons [E]' },
+  { id: 'select',  label: 'Select',  key: 's', tip: 'Select neuron or region [S]' },
+  { id: 'density',  label: 'Density', key: 'd', tip: 'Paint tissue density field [D]' },
 ]
 
-function SimStatusBadge() {
+function StatusBadge() {
   const status = useSimStore(s => s.status)
   const result = useSimStore(s => s.result)
   const error  = useSimStore(s => s.error)
+
   const label =
-    status === 'running' ? 'Running…' :
-    status === 'done'    ? `Done — ${result?.synapses_formed ?? 0} synapses` :
+    status === 'running' ? 'Simulating…' :
+    status === 'done'    ? `Complete — ${result?.synapses_formed ?? 0} synapses` :
     status === 'error'   ? 'Error' : 'Ready'
+
   return (
-    <div className={`sim-status ${status}`}>
+    <div className={`sim-status ${status}`} title={error ?? ''}>
       <div className="dot" />
       {label}
-      {status === 'error' && error && (
-        <span title={error} style={{ cursor: 'help', marginLeft: 4 }}>(?)</span>
-      )}
     </div>
   )
 }
 
-function ServerIndicator() {
+function ServerLight() {
   const online = useSimStore(s => s.serverOnline)
   const ping   = useSimStore(s => s.ping)
   useEffect(() => { ping() }, [])
-  const color = online === null ? '#3d5470' : online ? '#00e5a0' : '#e53935'
-  const label = online === null ? 'checking…' : online ? 'server online' : 'server offline'
+
+  const color = online === null ? 'var(--text-disabled)' :
+                online             ? 'var(--accent-green)' :
+                                     'var(--accent-red)'
+  const label = online === null ? 'Checking…' :
+                online             ? 'Server online' : 'Server offline'
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11,
-                  fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
+                  fontFamily: 'var(--font-mono)', color: 'var(--text-dim)',
+                  paddingRight: 8, borderRight: '1px solid var(--border-mid)' }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: color,
+                     display: 'inline-block', flexShrink: 0 }} />
       {label}
     </div>
   )
@@ -56,22 +65,26 @@ export default function Toolbar() {
   const status  = useSimStore(s => s.status)
 
   const preciseCount = useSceneStore(s => s.neurons.length)
-  const regionCount  = useRegionStore(s => s.regions.length)
   const bulkCount    = useRegionStore(s => s.totalCount())
+  const hasAnything  = preciseCount > 0 || bulkCount > 0
 
-  const clearPrecise = useSceneStore(s => s.clearScene)
+  const undo          = useHistoryStore(s => s.undo)
+  const canUndo       = useHistoryStore(s => s.canUndo)
+  const clearHistory  = useHistoryStore(s => s.clear)
+  const clearPrecise  = useSceneStore(s => s.clearScene)
   const clearRegions = useRegionStore(s => s.clearAll)
-  const clearAll = () => { clearPrecise(); clearRegions() }
 
-  const totalNeurons = preciseCount + bulkCount
-  const hasAnything  = totalNeurons > 0
-
-  // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return
-      const brush = BRUSHES.find(b => b.key === e.key.toLowerCase())
-      if (brush) setMode(brush.id)
+      // Ctrl+Z or Cmd+Z — undo
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        useHistoryStore.getState().undo()
+        return
+      }
+      const b = BRUSHES.find(b => b.key === e.key.toLowerCase())
+      if (b) setMode(b.id)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -79,18 +92,18 @@ export default function Toolbar() {
 
   return (
     <div className="app-toolbar">
+      {/* Logo */}
       <div className="logo">Neuro<span>Sim</span></div>
 
-      <div style={{ display: 'flex', gap: 3 }}>
+      {/* Brush pills */}
+      <div style={{ display: 'flex', gap: 2 }}>
         {BRUSHES.map(b => (
           <button
             key={b.id}
             className={`brush-pill ${mode === b.id ? 'active' : ''}`}
-            data-brush={b.id}
-            data-tooltip={`${b.tip} [${b.key.toUpperCase()}]`}
+            data-tooltip={b.tip}
             onClick={() => setMode(b.id)}
           >
-            <span style={{ fontSize: 12 }}>{b.icon}</span>
             {b.label}
           </button>
         ))}
@@ -100,24 +113,53 @@ export default function Toolbar() {
 
       {/* Neuron counts */}
       {hasAnything && (
-        <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)',
-                      display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span title="Precise neurons">
-            <span style={{ color: 'var(--text-dim)' }}>precise </span>
-            <span style={{ color: 'var(--text-accent)' }}>{preciseCount}</span>
+        <div style={{
+          fontSize: 11, fontFamily: 'var(--font-mono)',
+          color: 'var(--text-dim)',
+          display: 'flex', gap: 10, alignItems: 'center',
+          paddingRight: 10, borderRight: '1px solid var(--border-mid)',
+        }}>
+          <span>
+            precise&nbsp;
+            <span style={{ color: 'var(--text-secondary)' }}>{preciseCount}</span>
           </span>
-          <span title="Bulk region neurons">
-            <span style={{ color: 'var(--text-dim)' }}>bulk </span>
-            <span style={{ color: 'var(--accent-chem)' }}>{bulkCount.toLocaleString()}</span>
+          <span>
+            bulk&nbsp;
+            <span style={{ color: 'var(--text-secondary)' }}>
+              {bulkCount.toLocaleString()}
+            </span>
           </span>
         </div>
       )}
 
-      <ServerIndicator />
-      <SimStatusBadge />
+      <ServerLight />
+      <StatusBadge />
 
-      <button className="ns-btn" onClick={clearAll} disabled={!hasAnything}
-        style={{ marginLeft: 8 }}>
+      <button className="ns-btn"
+        onClick={undo}
+        disabled={!canUndo}
+        data-tooltip="Undo last stroke [Ctrl+Z]"
+        style={{ marginLeft: 4, fontFamily: 'var(--font-mono)' }}>
+        ↩ Undo
+      </button>
+
+      <button className="ns-btn"
+        onClick={() => {
+          // Snapshot for undo before wiping
+          const neurons   = useSceneStore.getState().exportSnapshot?.() ?? { neurons: [], chemicals: [] }
+          const regions   = useRegionStore.getState().exportSnapshot?.() ?? []
+          useHistoryStore.getState().push({
+            type: 'CLEAR',
+            neurons: neurons.neurons ?? [],
+            chemicals: neurons.chemicals ?? [],
+            regions,
+          })
+          clearPrecise()
+          clearRegions()
+          clearHistory()
+        }}
+        disabled={!hasAnything}
+        style={{ marginLeft: 2 }}>
         Clear
       </button>
 
@@ -125,7 +167,7 @@ export default function Toolbar() {
         onClick={run}
         disabled={status === 'running' || !hasAnything}
         style={{ marginLeft: 4 }}>
-        {status === 'running' ? '⟳ Running…' : '▶ Run Sim'}
+        {status === 'running' ? 'Running…' : '▶  Run'}
       </button>
     </div>
   )

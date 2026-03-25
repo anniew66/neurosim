@@ -5,7 +5,7 @@
 
 const BASE = '/api'
 
-export function sceneToJuliaConfig(preciseNeurons, regionNeurons, chemicals, globalParams = {}) {
+export function sceneToJuliaConfig(preciseNeurons, regionNeurons, chemicals, globalParams = {}, tissueDensity = null) {
   const allNeurons = [...preciseNeurons, ...regionNeurons]
   const neuronsObj = {}
 
@@ -34,6 +34,7 @@ export function sceneToJuliaConfig(preciseNeurons, regionNeurons, chemicals, glo
   return {
     neurons: neuronsObj,
     global_chemicals: chemObj,
+    tissue_density: tissueDensity,
     params: {
       seed:           globalParams.seed           ?? 1,
       extent:         globalParams.extent         ?? 120.0,
@@ -50,8 +51,8 @@ export function sceneToJuliaConfig(preciseNeurons, regionNeurons, chemicals, glo
   }
 }
 
-export async function runSimulation(preciseNeurons, regionNeurons, chemicals, globalParams = {}) {
-  const config = sceneToJuliaConfig(preciseNeurons, regionNeurons, chemicals, globalParams)
+export async function runSimulation(preciseNeurons, regionNeurons, chemicals, globalParams = {}, tissueDensity = null) {
+  const config = sceneToJuliaConfig(preciseNeurons, regionNeurons, chemicals, globalParams, tissueDensity)
   const resp = await fetch(`${BASE}/simulate`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },

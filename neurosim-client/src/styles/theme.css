@@ -1,39 +1,66 @@
-/* theme.css — NeuroSim Studio design tokens */
+/* theme.css — NeuroSim Studio design tokens
+   Aesthetic: professional engineering tool. Warm charcoal, clear structure,
+   corporate blue accent. IBM Plex Sans + Mono. No sci-fi glow. */
+
 :root {
-  --bg-base:       #080c10;
-  --bg-surface:    #0d1318;
-  --bg-elevated:   #121920;
-  --bg-panel:      #0f161c;
-  --bg-hover:      #1a2430;
-  --bg-active:     #1e2d3d;
+  /* ── Backgrounds ───────────────────────────────────────────────────────── */
+  --bg-base:       #1c1c1c;   /* canvas / outermost */
+  --bg-surface:    #242424;   /* toolbar, top-level panels */
+  --bg-panel:      #2a2a2a;   /* sidebar body */
+  --bg-elevated:   #313131;   /* input fields, cards */
+  --bg-hover:      #3a3a3a;
+  --bg-active:     #3f3f3f;
+  --bg-selected:   #1a3a5c;   /* selected item tint */
 
-  --border-dim:    rgba(255,255,255,0.06);
-  --border-mid:    rgba(255,255,255,0.12);
-  --border-bright: rgba(255,255,255,0.22);
+  /* ── Borders ────────────────────────────────────────────────────────────── */
+  --border-strong: #505050;   /* clearly visible dividers */
+  --border-mid:    #404040;   /* standard borders */
+  --border-dim:    #333333;   /* subtle separators */
 
-  --text-primary:  #e8f0f8;
-  --text-secondary:#7a9ab5;
-  --text-dim:      #3d5470;
-  --text-accent:   #4fc3f7;
+  /* ── Text ───────────────────────────────────────────────────────────────── */
+  --text-primary:  #f0f0f0;
+  --text-secondary:#a8a8a8;
+  --text-dim:      #666666;
+  --text-disabled: #4a4a4a;
+  --text-accent:   #5b9bd5;   /* lighter blue for inline accents */
 
-  --accent-axon:   #2979ff;
-  --accent-dend:   #e53935;
-  --accent-soma:   #f9f9f9;
-  --accent-chem:   #00e5a0;
-  --accent-warn:   #ffb300;
+  /* ── Accent colours ─────────────────────────────────────────────────────── */
+  --accent-blue:   #2b6cb0;   /* primary action, active states */
+  --accent-blue-lt:#3b82c4;   /* hover */
+  --accent-green:  #38a169;   /* healthy / connected / success */
+  --accent-amber:  #c07b2a;   /* warning / promote brush */
+  --accent-red:    #c0392b;   /* danger / erase / error */
+  --accent-teal:   #2c7a7b;   /* chemical fields */
 
-  --brush-neuron:  #4fc3f7;
-  --brush-chem:    #00e5a0;
-  --brush-erase:   #e53935;
+  /* ── Neurite type colours ──────────────────────────────────────────────── */
+  --color-axon:    #4a90d9;
+  --color-dend:    #c0392b;
+  --color-soma:    #e8e8e8;
+  --color-shaft:   #888888;
 
-  --radius-sm:     4px;
-  --radius-md:     8px;
-  --radius-lg:     14px;
+  /* ── Brush colours ──────────────────────────────────────────────────────── */
+  --brush-point:   #4a90d9;
+  --brush-area:    #5b9bd5;
+  --brush-carve:   #c0392b;
+  --brush-promote: #c07b2a;
+  --brush-erase:   #c0392b;
+  --brush-chem:    #2c7a7b;
+  --brush-select:  #c07b2a;
 
-  --font-ui:       'Syne', sans-serif;
-  --font-mono:     'DM Mono', monospace;
+  /* ── Typography ─────────────────────────────────────────────────────────── */
+  --font-ui:   'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Cascadia Code', monospace;
 
-  --sidebar-w:     280px;
-  --toolbar-h:     52px;
-  --panel-gap:     1px;
+  /* ── Layout ─────────────────────────────────────────────────────────────── */
+  --sidebar-w:  268px;
+  --toolbar-h:  44px;
+
+  /* ── Geometry ───────────────────────────────────────────────────────────── */
+  --radius-sm:  3px;
+  --radius-md:  5px;
+  --radius-lg:  8px;
+
+  /* ── Shadows ────────────────────────────────────────────────────────────── */
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md:  0 2px 8px rgba(0,0,0,0.5);
 }

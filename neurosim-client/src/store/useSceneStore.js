@@ -25,16 +25,31 @@ const useSceneStore = create((set, get) => ({
     set(s => ({ neurons: s.neurons.filter(n => !idSet.has(n.id)) }))
   },
 
+  // Returns { deletedNeurons, deletedChemicals } for undo recording
   eraseAt(center, radius) {
     const { neurons, chemicals } = get()
-    const deadNeurons = eraseInRadius(neurons, center, radius)
-    const deadChems   = eraseChemicalsInRadius(chemicals, center, radius)
-    const deadNSet    = new Set(deadNeurons)
-    const deadCSet    = new Set(deadChems)
+    const deadNeuronIds = eraseInRadius(neurons, center, radius)
+    const deadChemIds   = eraseChemicalsInRadius(chemicals, center, radius)
+    const deadNSet      = new Set(deadNeuronIds)
+    const deadCSet      = new Set(deadChemIds)
+    const deletedNeurons   = neurons.filter(n => deadNSet.has(n.id))
+    const deletedChemicals = chemicals.filter(ch => deadCSet.has(ch.id))
     set({
       neurons:   neurons.filter(n => !deadNSet.has(n.id)),
-      chemicals: chemicals.filter(c => !deadCSet.has(c.id)),
+      chemicals: chemicals.filter(ch => !deadCSet.has(ch.id)),
     })
+    return { deletedNeurons, deletedChemicals }
+  },
+
+  // Restore a previously-exported scene state (used by undo CLEAR)
+  restoreState(neurons, chemicals) {
+    set({ neurons: [...neurons], chemicals: [...chemicals] })
+  },
+
+  // Export current state snapshot for CLEAR undo
+  exportSnapshot() {
+    const { neurons, chemicals } = get()
+    return { neurons: [...neurons], chemicals: [...chemicals] }
   },
 
   updateNeuron(id, patch) {
@@ -119,7 +134,11 @@ const useSceneStore = create((set, get) => ({
   clearSelection()  { set({ selectedNeuronId: null }) },
 
   // ── Actions: scene ───────────────────────────────────────────────────────────
-  clearScene() { set({ neurons: [], chemicals: [], selectedNeuronId: null }) },
+  clearScene() {
+    const snap = get().exportSnapshot?.() ?? { neurons: [], chemicals: [] }
+    set({ neurons: [], chemicals: [], selectedNeuronId: null })
+    return snap
+  },
 
   /** Export a plain object ready to JSON.stringify and send to Julia. */
   exportScene() {
