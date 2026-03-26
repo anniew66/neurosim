@@ -50,8 +50,8 @@ export default function PresetPanel() {
   const cursorPos   = useBrushStore(s => s.cursorPos)
 
   function stamp(presetId) {
-    const [cx, cy, cz] = cursorPos ?? [0, 0, 0]
-    stampPreset(presetId, cx, cy, cz, scale)
+    // Always stamp at world origin [0,0,0] — the center of the sim surface.
+    stampPreset(presetId, 0, 0, 0, scale)
     setLast(presetId)
     setTimeout(() => setLast(null), 1200)
   }
@@ -61,9 +61,9 @@ export default function PresetPanel() {
       <div className="panel-section">
         <div className="panel-label">Neural Presets</div>
         <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 12 }}>
-          Stamps a pre-configured neural structure at the brush cursor position.
-          Move your cursor into the viewport first.
+          Stamps at the center of the simulation surface. Use the scale slider to adjust size.
         </div>
+
         <PresetScaleControl value={scale} onChange={setScale} />
       </div>
 

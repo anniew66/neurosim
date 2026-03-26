@@ -181,12 +181,15 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       }
 
       case 'chemical': {
-        const chem = {
-          id: crypto.randomUUID(), name: b.chemical.name, source: [cx, cy, cz],
-          sigma: b.chemical.sigma, strength: b.chemical.strength,
-        }
-        addChemicals([chem])
-        pushHistory({ type: 'ADD_CHEMICALS', chemIds: [chem.id] })
+        // Accumulate stroke positions — merged into one weighted source on pointerUp
+        // This avoids spawning hundreds of individual sources while dragging
+        const pts = strokeBuffer.current
+        const newPts = new Float32Array(pts.length + 3)
+        newPts.set(pts)
+        newPts[pts.length]   = cx
+        newPts[pts.length+1] = cy
+        newPts[pts.length+2] = cz
+        strokeBuffer.current = newPts
         break
       }
 
@@ -257,7 +260,7 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       const hit = solveSurface()
       if (!hit) return
       // Density brush: no distance gate — paint continuously as cursor moves
-      if (b.mode !== 'density') {
+      if (b.mode !== 'density' && b.mode !== 'chemical') {
         if (lastDabPos.current) {
           const dx = hit[0] - lastDabPos.current[0]
           const dz = hit[2] - lastDabPos.current[2]
@@ -273,6 +276,28 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       if (orbitRef.current) orbitRef.current.enabled = true
 
       const b = brushRef.current
+
+      // Commit chemical stroke: merge all drag positions into one source at centroid
+      if (b.mode === 'chemical' && strokeBuffer.current.length >= 3) {
+        const pts = strokeBuffer.current
+        const n   = pts.length / 3
+        let sumX = 0, sumY = 0, sumZ = 0
+        for (let i = 0; i < pts.length; i += 3) {
+          sumX += pts[i]; sumY += pts[i+1]; sumZ += pts[i+2]
+        }
+        // Sigma grows with stroke length: wider strokes = wider diffusion field
+        const strokeSpan = b.brushRadius * Math.max(1, Math.sqrt(n) * 0.5)
+        const chem = {
+          id:       crypto.randomUUID(),
+          name:     b.chemical.name,
+          source:   [sumX/n, sumY/n, sumZ/n],
+          sigma:    Math.max(b.chemical.sigma, strokeSpan),
+          strength: b.chemical.strength,
+        }
+        addChemicals([chem])
+        pushHistory({ type: 'ADD_CHEMICALS', chemIds: [chem.id] })
+        strokeBuffer.current = new Float32Array(0)
+      }
 
       // Commit density stroke undo — compare snapshot to detect actual change
       if (b.mode === 'density' && densityStrokeSnapshot.current !== null) {
