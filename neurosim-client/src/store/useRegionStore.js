@@ -82,6 +82,13 @@ const useRegionStore = create((set, get) => ({
       max_branch_len: defaults.max_branch_length,
       neuriteCount:   brushSettings.neuriteCount ?? 1,
       color:          defaults.color,
+      // Input / timing fields
+      is_input:             brushSettings.is_input             ?? false,
+      start_time:           brushSettings.start_time           ?? 0,
+      input_mode:           brushSettings.input_mode           ?? 'rate',
+      input_rate:           brushSettings.input_rate           ?? 0.1,
+      input_sequence:       brushSettings.input_sequence       ?? [],
+      input_emit_chemicals: brushSettings.input_emit_chemicals ?? false,
     }
     set(s => ({ regions: [...s.regions, region] }))
   },
@@ -174,11 +181,18 @@ const useRegionStore = create((set, get) => ({
               id:             crypto.randomUUID(),
               soma:           [extracted[i*3], extracted[i*3+1], extracted[i*3+2]],
               morphology:     r.morphology,
-              releases:       [...r.releases],
-              attracts:       [...r.attracts],
-              repels:         [...r.repels],
+              releases:       [...(r.releases ?? [])],
+              attracts:       [...(r.attracts ?? [])],
+              repels:         [...(r.repels ?? [])],
               branch_prob:    r.branch_prob,
               max_branch_len: r.max_branch_len,
+              // Input / timing defaults for promoted neurons
+              is_input:             false,
+              start_time:           0,
+              input_mode:           'rate',
+              input_rate:           0.1,
+              input_sequence:       [],
+              input_emit_chemicals: false,
               neurites:       Array.from({ length: Math.max(1, r.neuriteCount) },
                                 (_, i2) => ({
                                   azimuth:   (i2 / Math.max(1, r.neuriteCount)) * 360,

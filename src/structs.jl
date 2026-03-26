@@ -67,6 +67,7 @@ mutable struct NeuronRecord
     theta_ltp        :: Float64       # BCM LTP threshold
     k_stab           :: Float64       # stability → LTD-threshold coupling
     prune_delay      :: Int           # structural steps weak before pruning
+    axon_dir         :: Union{Nothing, SVector{3,Float64}}  # direction soma→axon tip (set on first axon sprout)
 end
 
 # ── Per-neuron electrical state ───────────────────────────────────────────────

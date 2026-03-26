@@ -7,7 +7,6 @@ import useSceneStore  from '../../store/useSceneStore.js'
 import useRegionStore   from '../../store/useRegionStore.js'
 import useHistoryStore  from '../../store/useHistoryStore.js'
 
-
 const BRUSHES = [
   { id: 'point',   label: 'Point',   key: 'p', tip: 'Place single precise neuron [P]' },
   { id: 'area',    label: 'Area',    key: 'a', tip: 'Paint bulk neuron region [A]' },
@@ -15,7 +14,8 @@ const BRUSHES = [
   { id: 'promote', label: 'Promote', key: 'o', tip: 'Extract bulk → precise [O]' },
   { id: 'erase',   label: 'Erase',   key: 'e', tip: 'Remove precise neurons [E]' },
   { id: 'select',  label: 'Select',  key: 's', tip: 'Select neuron or region [S]' },
-  { id: 'density',  label: 'Density', key: 'd', tip: 'Paint tissue density field [D]' },
+  { id: 'density',  label: 'Density',  key: 'd', tip: 'Paint tissue density field [D]' },
+  { id: 'chemical', label: 'Chemical', key: 'h', tip: 'Place free chemical source [H]' },
 ]
 
 function StatusBadge() {

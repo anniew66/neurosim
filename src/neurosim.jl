@@ -113,6 +113,10 @@ function init_model(neurons::OrderedDict{String,NeuronRecord},
         :prune_delay          => p.prune_delay,
         :vtk_dir              => p.vtk_dir,
         :pvd_buffer           => Vector{Tuple{Float64,String}}(),
+        :traj_written_lens    => Dict{Tuple{String,Int},Int}(),
+        :stream_traj_lens     => Dict{Tuple{String,Int},Int}(),
+        :health_checkpoints  => Dict{Int,Dict{String,Float64}}(),
+        :stream_channel       => nothing,   # set to a Channel when streaming
     )
 
     model = StandardABM(Union{GrowthCone,Soma}, space;
@@ -155,10 +159,14 @@ end
 
 # ── Simulation loop ───────────────────────────────────────────────────────────
 
+# Global reference so /state can read the live model between requests
+_current_model = nothing
+
 function run_simulation(json_str::AbstractString)
     neurons, base_chems, tissue_density, p = parse_json_config(json_str)
 
     model = init_model(neurons, base_chems, tissue_density, p)
+    global _current_model; _current_model = model
 
     n_neurons = length(neurons)
     println("Run $(p.run_id) — $n_neurons neuron(s)")
@@ -185,6 +193,26 @@ function run_simulation(json_str::AbstractString)
 
         # Write VTK at structural step
         write_vtk_timestep!(model, p.vtk_dir)
+
+        # Push live state to any connected browser viewer
+        if model.stream_channel !== nothing
+            try
+                state = build_stream_state(model)
+                put!(model.stream_channel, state)
+            catch
+                model.stream_channel = nothing
+            end
+        end
+
+        # Checkpoint health every 100 steps for time-scrubbing in the viewer
+        if t_struct == 1 || t_struct % 100 == 0
+            snap = Dict{String,Float64}()
+            for (nid, sid) in model.soma_agent_ids
+                hasid(model, sid) || continue
+                snap[nid] = model[sid].health
+            end
+            model.health_checkpoints[t_struct] = snap
+        end
 
         # Progress print every 100 structural steps
         if t_struct % 100 == 0
@@ -234,6 +262,48 @@ function run_simulation(json_str::AbstractString)
     )
 end
 
+# ── Live state for browser streaming ─────────────────────────────────────────
+# Produces a compact JSON-serialisable Dict of the current simulation state.
+# Sent via SSE to the in-browser viewer every structural step.
+
+function build_stream_state(model)
+    somas = []
+    cones = []
+    for a in allagents(model)
+        if a isa Soma
+            elec = get(model.neuron_elec, a.neuron_id, nothing)
+            fr   = elec !== nothing ? elec.fire_rate : 0.0
+            push!(somas, Dict(
+                "id"     => a.id,
+                "nid"    => a.neuron_id[1:8],
+                "pos"    => [a.pos[1], a.pos[2], a.pos[3]],
+                "r"      => a.soma_radius,
+                "h"      => a.health,
+                "d"      => a.dormant,
+                "firing" => round(fr, digits=4),
+            ))
+        elseif a isa GrowthCone && !a.retracted
+            push!(cones, Dict(
+                "id"   => a.id,
+                "nid"  => a.neuron_id[1:8],
+                "pos"  => [a.pos[1], a.pos[2], a.pos[3]],
+                "axon" => a.is_axon,
+            ))
+        end
+    end
+
+    # /state is intentionally minimal — just positions for live display.
+    # Full trajectory history is served by /trajectories (loaded once on connect).
+    # Keeping this small prevents ECANCELED errors from slow JSON serialisation.
+    syn_count = length(model.synapses)
+
+    Dict("t"      => model.t,
+         "somas"  => somas,
+         "cones"  => cones,
+         "syns"   => syn_count,
+         "extent" => model.hi[1])
+end
+
 # ── HTTP server ───────────────────────────────────────────────────────────────
 
 function start_server(; host="0.0.0.0", port=8080)
@@ -254,10 +324,119 @@ function start_server(; host="0.0.0.0", port=8080)
                 return HTTP.Response(200, ["Content-Type"=>"application/json"],
                                      JSON3.write(result))
             end
+            # /trajectories: full trajectory dump with timestamps — for post-run playback
+            if req.method == "GET" && startswith(req.target, "/trajectories")
+                global _current_model
+                if _current_model === nothing
+                    return HTTP.Response(404,
+                        ["Content-Type"=>"application/json","Access-Control-Allow-Origin"=>"*"],
+                        JSON3.write(Dict("error"=>"no simulation")))
+                end
+                all_segs = []
+                for (uid, nr) in _current_model.neurons
+                    for (ni, ns) in enumerate(nr.neurites)
+                        traj = ns.trajectory
+                        length(traj) < 2 && continue
+                        ax = ns.is_axon ? 1 : 0
+                        for wi in 1:(length(traj)-1)
+                            t_step, p1 = traj[wi]
+                            _,      p2 = traj[wi+1]
+                            push!(all_segs, [p1[1],p1[2],p1[3],
+                                             p2[1],p2[2],p2[3],
+                                             ax, Float64(t_step)])
+                        end
+                    end
+                end
+                # Build health checkpoints compact format: [[t, nid, health], ...]
+                hc = _current_model.health_checkpoints
+                chk_list = []
+                for (t_chk, snap) in sort(collect(hc), by=x->x[1])
+                    for (nid, h) in snap
+                        push!(chk_list, [t_chk, nid[1:8], round(h, digits=3)])
+                    end
+                end
+                return HTTP.Response(200,
+                    ["Content-Type"=>"application/json","Access-Control-Allow-Origin"=>"*"],
+                    JSON3.write(Dict(
+                        "segs"     => all_segs,
+                        "max_t"    => _current_model.t,
+                        "extent"   => _current_model.hi[1],
+                        "checkpoints" => chk_list,
+                    )))
+            end
+
+            # /snapshot?t=N: soma state at checkpoint nearest to t
+            if req.method == "GET" && startswith(req.target, "/snapshot")
+                global _current_model
+                if _current_model === nothing
+                    return HTTP.Response(404,
+                        ["Content-Type"=>"application/json","Access-Control-Allow-Origin"=>"*"],
+                        JSON3.write(Dict("error"=>"no simulation")))
+                end
+                t_req = 0
+                try
+                    m = match(r"[?&]t=([0-9]+)", req.target)
+                    if m !== nothing; t_req = parse(Int, m[1]); end
+                catch; end
+                # Find nearest checkpoint
+                hc   = _current_model.health_checkpoints
+                t_chk = isempty(hc) ? 0 : argmin(abs(k - t_req) for k in keys(hc))
+                snap  = get(hc, t_chk, Dict{String,Float64}())
+                somas_snap = []
+                for a in allagents(_current_model)
+                    a isa Soma || continue
+                    h = get(snap, a.neuron_id, a.health)
+                    elec = get(_current_model.neuron_elec, a.neuron_id, nothing)
+                    fr   = elec !== nothing ? elec.fire_rate : 0.0
+                    push!(somas_snap, Dict(
+                        "nid"     => a.neuron_id[1:8],
+                        "pos"     => [a.pos[1], a.pos[2], a.pos[3]],
+                        "r"       => a.soma_radius,
+                        "h"       => h,
+                        "d"       => a.dormant,
+                        "firing"  => round(fr, digits=4),
+                    ))
+                end
+                return HTTP.Response(200,
+                    ["Content-Type"=>"application/json","Access-Control-Allow-Origin"=>"*"],
+                    JSON3.write(Dict("t"=>t_chk, "somas"=>somas_snap)))
+            end
+
+            # CORS preflight
+            if req.method == "OPTIONS"
+                return HTTP.Response(200, [
+                    "Access-Control-Allow-Origin"  => "*",
+                    "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers" => "Content-Type"])
+            end
+
+            # /state: snapshot of current model
+            if req.method == "GET" && req.target == "/state"
+                global _current_model
+                if _current_model === nothing
+                    return HTTP.Response(404,
+                        ["Content-Type"=>"application/json",
+                         "Access-Control-Allow-Origin"=>"*"],
+                        JSON3.write(Dict("error"=>"no simulation running")))
+                end
+                state = build_stream_state(_current_model)
+                body  = JSON3.write(state)
+                return HTTP.Response(200,
+                    ["Content-Type"              => "application/json",
+                     "Access-Control-Allow-Origin" => "*",
+                     "Content-Length"             => string(sizeof(body))],
+                    body)
+            end
+
             return HTTP.Response(404, ["Content-Type"=>"application/json"],
                                  JSON3.write(Dict("error"=>"not found")))
         catch e
+            # Suppress ECANCELED: client closed connection before we finished writing.
+            # This is normal when the browser polls faster than Julia can respond.
             msg = sprint(showerror, e)
+            if occursin("ECANCELED", msg) || occursin("operation canceled", msg)
+                return  # nothing to do — connection already gone
+            end
             @warn "Request error: $msg"
             return HTTP.Response(500, ["Content-Type"=>"application/json"],
                                  JSON3.write(Dict("error"=>msg)))
@@ -280,23 +459,20 @@ function main(args)
         starter = """{
   "neurons": {
     "input-001": {
-      "soma": [0.1, 0.5, 0.5],
+      "soma": [0.15, 0.5, 0.5],
       "morphology": "generic",
       "is_input": true,
       "input": { "mode": "rate", "rate": 0.1, "emit_chemicals": false },
-      "neurites": [[0, 0]],
       "start_time": 0
     },
     "neuron-001": {
       "soma": [0.5, 0.5, 0.5],
       "morphology": "granule",
-      "neurites": [[180, 0], [0, 0]],
       "start_time": 0
     },
     "neuron-002": {
       "soma": [0.8, 0.5, 0.5],
       "morphology": "purkinje",
-      "neurites": [[180, 0], [90, 0], [270, 0]],
       "start_time": 50
     }
   },
@@ -307,7 +483,7 @@ function main(args)
     "seed": 1,
     "extent": 1.0,
     "step_size": 0.003,
-    "chemotaxis": 3.0,
+    "chemotaxis": 1.5,   // reduced: prevents single-attractor convergence
     "random_walk": 0.5,
     "synapse_radius": 0.003,
     "max_steps": 2000,

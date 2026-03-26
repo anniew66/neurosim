@@ -23,13 +23,26 @@ function clamp_to_box(x, lo, hi)
 end
 
 function net_chemical_gradient(x, attracts, repels, sources)
+    # Returns a unit-scale gradient vector.
+    # Each source contributes a direction weighted by its local concentration
+    # gradient magnitude. We use tanh saturation so:
+    #   - very close sources don't dominate with infinite pull
+    #   - the signal decays naturally with distance
+    #   - multiple distributed sources produce a balanced field
     g = SVector{3,Float64}(0,0,0)
     for s in sources
         s.name in attracts || s.name in repels || continue
-        d   = x - s.pos
-        r2  = dot(d,d)
-        ci  = s.strength * exp(-r2 / (2*s.sigma^2))
-        dir = ci * (-d / s.sigma^2)
+        d    = x - s.pos
+        dist = sqrt(dot(d, d))
+        dist < 1e-9 && continue   # exactly at source — no gradient
+        d_hat = d / dist
+
+        # Gradient magnitude of Gaussian: peaks at dist=sigma, tanh-saturated
+        raw_g = s.strength * (dist / s.sigma^2) * exp(-dist^2 / (2*s.sigma^2))
+        # Saturation: prevents near-source oscillation and single-source dominance
+        sat_g = tanh(raw_g * 2.0)
+
+        dir = sat_g * (-d_hat)   # point toward source
         g   = g + (s.name in attracts ? dir : -dir)
     end
     g
@@ -60,31 +73,29 @@ function build_neuron_record(rng, uid_str, soma_pos, morphology, angle_list,
     prune_f     = prune_delay_override !== nothing ? prune_delay_override : PRUNE_DELAY_DEFAULT
     soma_r      = defs.soma_radius
 
-    # Build neurites — guard against empty list
+    # Build neurites from angle list.
+    # Empty list is fine — sprouting will generate neurites from gradients.
     raw_specs = NeuriteSpec[]
     for angles in angle_list
         az = Float64(angles[1]); el = Float64(angles[2])
         push!(raw_specs, NeuriteSpec(az, el, false,
               Vector{Tuple{Int,SVector{3,Float64}}}()))
     end
-    if isempty(raw_specs)
-        push!(raw_specs, NeuriteSpec(0.0, 0.0, false,
-              Vector{Tuple{Int,SVector{3,Float64}}}()))
-    end
 
-    # Input neurons: all neurites are axons (no incoming dendrites)
-    # Network neurons: randomly assign one neurite as axon
-    axon_idx = is_input ? 0 : rand(rng, 1:length(raw_specs))
+    # Input neurons: all pre-specified neurites are axons.
+    # Network neurons: axon designation emerges during sprouting.
+    # Pre-specified neurites: treat the first as axon if input, all as dendrites otherwise
+    # (sprouting will assign the first sprout as the axon for network neurons).
     neurite_specs = [NeuriteSpec(ns.azimuth_deg, ns.elevation_deg,
-                                  is_input ? true : (ni == axon_idx),
+                                  is_input,   # input = axon; network = dendrite (sprouting picks axon)
                                   ns.trajectory)
-                     for (ni, ns) in enumerate(raw_specs)]
+                     for ns in raw_specs]
 
     NeuronRecord(uid_str, soma_pos, morphology,
                  releases_f, attracts_f, repels_f,
                  neurite_specs, bprob_f, Ltarget_f, soma_r,
                  start_time, is_input, input_spec,
-                 θ_ltd_f, θ_ltp_f, k_stab_f, prune_f)
+                 θ_ltd_f, θ_ltp_f, k_stab_f, prune_f, nothing)
 end
 
 # ── parse_input_spec ──────────────────────────────────────────────────────────
@@ -127,7 +138,7 @@ function parse_json_config(json_str::AbstractString)
             uid_str    = String(uid)
             soma_pos   = SVector{3,Float64}(Float64.(pos_raw)...)
             morphology = haskey(morphology_map, uid) ? String(morphology_map[uid]) : "generic"
-            angle_list = haskey(neurites_map, uid)   ? neurites_map[uid]           : [[0,0]]
+            angle_list = haskey(neurites_map, uid)   ? neurites_map[uid]           : []
             neurons[uid_str] = build_neuron_record(
                 tmp_rng, uid_str, soma_pos, morphology, angle_list,
                 nothing, nothing, nothing, nothing, nothing,
@@ -139,7 +150,7 @@ function parse_json_config(json_str::AbstractString)
             uid_str    = String(uid)
             soma_pos   = SVector{3,Float64}(Float64.(nd[:soma])...)
             morphology = haskey(nd, :morphology) ? String(nd[:morphology]) : "generic"
-            angle_list = haskey(nd, :neurites)   ? nd[:neurites]           : [[0,0]]
+            angle_list = haskey(nd, :neurites)   ? nd[:neurites]           : []
             releases   = haskey(nd, :releases)   ? String.(nd[:releases])  : nothing
             attracts   = haskey(nd, :attracts)   ? String.(nd[:attracts])  : nothing
             repels     = haskey(nd, :repels)     ? String.(nd[:repels])    : nothing

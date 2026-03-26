@@ -1,22 +1,28 @@
 # src/vtk_output.jl
-# VTK frame writing, PVD assembly, ParaView load script.
+# VTK frame writing — delta-only trajectory updates.
+#
+# Key optimisation: each frame writes ONLY the new trajectory segments added
+# since the last frame. model.traj_written_lens tracks how many waypoints have
+# already been serialised per (neuron_id, neurite_idx).
+# Result: per-frame file size is O(new_waypoints), not O(cumulative_waypoints).
 
-using WriteVTK, Printf, Graphs
+using WriteVTK, Printf
+
+function init_vtk_tracking!(model)
+    model.traj_written_lens = Dict{Tuple{String,Int},Int}()
+end
 
 function write_vtk_timestep!(model, vtk_dir)
-    t       = model.t
-    pvd_buf = model.pvd_buffer
-    agents  = collect(allagents(model))
+    t      = model.t
+    agents = collect(allagents(model))
     isempty(agents) && return
 
-    # ── Build point list: agents + neurite shaft points ─────────────────────
-    all_pts    = Vector{SVector{3,Float32}}()
-    type_arr   = Int32[]     # 0=soma,1=axon tip,2=dend tip,3=shaft,4=dormant soma
-    id_arr     = Int32[]
-    radius_arr = Float32[]
-    health_arr = Float32[]
-    n_syn_arr  = Int32[]
-
+    all_pts     = Vector{SVector{3,Float32}}()
+    type_arr    = Int32[]
+    id_arr      = Int32[]
+    radius_arr  = Float32[]
+    health_arr  = Float32[]
+    n_syn_arr   = Int32[]
     id_to_ptidx = Dict{Int,Int}()
 
     for a in agents
@@ -28,7 +34,7 @@ function write_vtk_timestep!(model, vtk_dir)
             push!(radius_arr, Float32(a.soma_radius))
             push!(health_arr, Float32(a.health))
             push!(n_syn_arr,  Int32(a.n_stable_syn))
-        else  # GrowthCone
+        else
             push!(type_arr,   a.is_axon ? Int32(1) : Int32(2))
             push!(radius_arr, Float32(0.001))
             push!(health_arr, Float32(1.0))
@@ -36,31 +42,43 @@ function write_vtk_timestep!(model, vtk_dir)
         end
     end
 
-    # Shaft trajectory polylines
-    line_cells = MeshCell[]
-    soma_ptidx = Dict{String,Int}()
-    for a in agents; a isa Soma && (soma_ptidx[a.neuron_id] = id_to_ptidx[a.id]); end
-    gc_ptidx   = Dict{Tuple{String,Int,Int},Int}()
-    for a in agents
-        a isa GrowthCone && (gc_ptidx[(a.neuron_id, a.neurite_idx, a.branch_idx)] = id_to_ptidx[a.id])
-    end
+    # Delta trajectory: only new waypoints since last write
+    line_cells   = MeshCell[]
+    written_lens = model.traj_written_lens
 
     for (uid, nr) in model.neurons
-        s_idx = get(soma_ptidx, uid, 0); s_idx == 0 && continue
         for (ni, ns) in enumerate(nr.neurites)
-            isempty(ns.trajectory) && continue
-            shaft_ids = Int[]
-            for (_, pos) in ns.trajectory
+            key      = (uid, ni)
+            last_len = get(written_lens, key, 0)
+            traj     = ns.trajectory
+            cur_len  = length(traj)
+            cur_len <= last_len && continue
+
+            prev_pt_idx = 0
+            # Include the last-written point as the handoff so segments are continuous
+            if last_len > 0
+                _, pos = traj[last_len]
                 push!(all_pts, SVector{3,Float32}(pos[1], pos[2], pos[3]))
-                push!(shaft_ids, length(all_pts))
+                prev_pt_idx = length(all_pts)
                 push!(type_arr, Int32(3)); push!(id_arr, Int32(0))
-                push!(radius_arr, Float32(0.0005))
+                push!(radius_arr, Float32(0.0004))
                 push!(health_arr, Float32(1.0)); push!(n_syn_arr, Int32(0))
             end
-            tip_idx = get(gc_ptidx, (uid, ni, 0), 0)
-            poly_pts = vcat([s_idx], shaft_ids, tip_idx != 0 ? [tip_idx] : Int[])
-            length(poly_pts) >= 2 &&
-                push!(line_cells, MeshCell(VTKCellTypes.VTK_POLY_LINE, poly_pts))
+
+            for wi in (last_len + 1):cur_len
+                _, pos = traj[wi]
+                push!(all_pts, SVector{3,Float32}(pos[1], pos[2], pos[3]))
+                new_idx = length(all_pts)
+                push!(type_arr, Int32(3)); push!(id_arr, Int32(0))
+                push!(radius_arr, Float32(0.0004))
+                push!(health_arr, Float32(1.0)); push!(n_syn_arr, Int32(0))
+                if prev_pt_idx > 0
+                    push!(line_cells,
+                          MeshCell(VTKCellTypes.VTK_LINE, [prev_pt_idx, new_idx]))
+                end
+                prev_pt_idx = new_idx
+            end
+            written_lens[key] = cur_len
         end
     end
 
@@ -74,11 +92,10 @@ function write_vtk_timestep!(model, vtk_dir)
     isempty(line_cells) &&
         push!(line_cells, MeshCell(VTKCellTypes.VTK_LINE, [1, 1]))
 
-    # ── Assemble and write ────────────────────────────────────────────────────
     n_pts = length(all_pts)
     pts   = zeros(Float32, 3, n_pts)
     for (i, p) in enumerate(all_pts)
-        pts[1,i]=p[1]; pts[2,i]=p[2]; pts[3,i]=p[3]
+        pts[1,i] = p[1]; pts[2,i] = p[2]; pts[3,i] = p[3]
     end
 
     fname = joinpath(vtk_dir, @sprintf("frame_%05d", t))
@@ -89,7 +106,7 @@ function write_vtk_timestep!(model, vtk_dir)
     vtk["health",      VTKPointData()] = health_arr
     vtk["n_synapses",  VTKPointData()] = n_syn_arr
     saved = vtk_save(vtk)
-    push!(pvd_buf, (Float64(t), saved[1]))
+    push!(model.pvd_buffer, (Float64(t), saved[1]))
 end
 
 function write_pvd(pvd_buf, pvd_path, vtk_dir)
@@ -110,61 +127,24 @@ function write_paraview_script(pvd_path, script_path)
     pvd_abs = abspath(pvd_path)
     lines   = String[]
     push!(lines, "from paraview.simple import *")
-    push!(lines, "")
     push!(lines, "pvd = OpenDataFile(r\"" * pvd_abs * "\")")
-    push!(lines, "RenameSource('neurosim', pvd)")
-    push!(lines, "renderView = GetActiveViewOrCreate('RenderView')")
-    push!(lines, "renderView.Background = [0.1, 0.1, 0.12]")
-    push!(lines, "")
-    push!(lines, "# -- Sphere glyphs")
-    push!(lines, "# agent_type: 0=soma  1=axon tip  2=dend tip  3=shaft  4=dormant soma")
+    push!(lines, "rv = GetActiveViewOrCreate('RenderView')")
+    push!(lines, "rv.Background = [0.08, 0.08, 0.10]")
     push!(lines, "sphereSrc = Sphere()")
-    push!(lines, "sphereSrc.ThetaResolution = 14")
-    push!(lines, "sphereSrc.PhiResolution   = 14")
+    push!(lines, "sphereSrc.ThetaResolution = 12; sphereSrc.PhiResolution = 10")
     push!(lines, "glyph = Glyph(Input=pvd, GlyphType=sphereSrc)")
-    push!(lines, "glyph.ScaleArray  = ['POINTS', 'radius']")
-    push!(lines, "glyph.ScaleFactor = 1.0")
-    push!(lines, "glyph.GlyphMode   = 'All Points'")
-    push!(lines, "glyphDisp = Show(glyph, renderView)")
-    push!(lines, "glyphDisp.Representation = 'Surface'")
-    push!(lines, "ColorBy(glyphDisp, ('POINTS', 'agent_type'))")
+    push!(lines, "glyph.ScaleArray = ['POINTS','radius']; glyph.ScaleFactor = 1.0")
+    push!(lines, "glyph.GlyphMode = 'All Points'")
+    push!(lines, "gd = Show(glyph, rv); gd.Representation = 'Surface'")
+    push!(lines, "ColorBy(gd, ('POINTS','agent_type'))")
     push!(lines, "lut = GetColorTransferFunction('agent_type')")
-    push!(lines, "lut.RGBPoints = [")
-    push!(lines, "    0.0,0.90,0.90,0.90,  # soma — light grey")
-    push!(lines, "    1.0,0.29,0.56,0.89,  # axon tip — blue")
-    push!(lines, "    2.0,0.75,0.22,0.17,  # dend tip — red")
-    push!(lines, "    3.0,0.45,0.45,0.45,  # shaft — grey")
-    push!(lines, "    4.0,0.30,0.30,0.30,  # dormant soma — dark grey")
-    push!(lines, "]")
-    push!(lines, "lut.ColorSpace = 'RGB'")
-    push!(lines, "glyphDisp.LookupTable = lut")
-    push!(lines, "glyphDisp.SetScalarBarVisibility(renderView, True)")
-    push!(lines, "")
-    push!(lines, "# -- Neurite shafts as tubes")
-    push!(lines, "surf = ExtractSurface(Input=pvd)")
-    push!(lines, "tube = Tube(Input=surf)")
-    push!(lines, "tube.Radius = 0.0003")
-    push!(lines, "try:")
-    push!(lines, "    tube.NumberofSides = 6")
-    push!(lines, "except AttributeError:")
-    push!(lines, "    pass")
-    push!(lines, "tubeDisp = Show(tube, renderView)")
-    push!(lines, "tubeDisp.Representation = 'Surface'")
-    push!(lines, "ColorBy(tubeDisp, ('POINTS', 'agent_type'))")
-    push!(lines, "tubeDisp.LookupTable = lut")
-    push!(lines, "tubeDisp.Opacity = 0.7")
-    push!(lines, "")
-    push!(lines, "# -- Health coloring option (uncomment to switch)")
-    push!(lines, "# ColorBy(glyphDisp, ('POINTS', 'health'))")
-    push!(lines, "# health_lut = GetColorTransferFunction('health')")
-    push!(lines, "# health_lut.RGBPoints = [0.0,0.75,0.22,0.17, 0.5,0.95,0.77,0.06, 1.0,0.13,0.70,0.26]")
-    push!(lines, "# glyphDisp.LookupTable = health_lut")
-    push!(lines, "")
+    push!(lines, "lut.RGBPoints = [0,0.9,0.9,0.9, 1,0.3,0.6,0.9, 2,0.8,0.2,0.2, 3,0.45,0.45,0.45, 4,0.3,0.3,0.3]")
+    push!(lines, "lut.ColorSpace = 'RGB'; gd.LookupTable = lut")
+    push!(lines, "tube = Tube(Input=pvd); tube.Radius = 0.0003")
+    push!(lines, "td = Show(tube, rv); td.Opacity = 0.65; td.LookupTable = lut")
     push!(lines, "ResetCamera()")
     push!(lines, "animScene = GetAnimationScene()")
     push!(lines, "animScene.UpdateAnimationUsingDataTimeSteps()")
-    push!(lines, "Render()")
-    push!(lines, "print('NeuroSim: 0=soma 1=axon 2=dendrite 3=shaft 4=dormant -- Play to animate')")
-    push!(lines, "Interact()")
+    push!(lines, "Render(); Interact()")
     write(script_path, join(lines, "\n") * "\n")
 end

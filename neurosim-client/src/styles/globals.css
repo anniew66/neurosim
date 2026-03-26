@@ -17,7 +17,8 @@ html, body, #root {
 .app-shell {
   display: grid;
   grid-template-rows: var(--toolbar-h) 1fr;
-  grid-template-columns: var(--sidebar-w) 1fr var(--sidebar-w);
+  grid-template-columns: var(--sidebar-w) 1fr auto;
+  overflow: hidden;  /* prevent sidebar from wrapping outside shell */
   width: 100vw; height: 100vh;
 }
 
@@ -47,23 +48,34 @@ html, body, #root {
 .app-toolbar .logo span { color: var(--accent-blue-lt); }
 
 /* ── Sidebars ─────────────────────────────────────────────────────────────── */
-.sidebar-left, .sidebar-right {
+.sidebar-left {
   background: var(--bg-panel);
   border-right: 1px solid var(--border-strong);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  grid-column: 1;
+  grid-row: 2;
 }
 
 .sidebar-right {
-  border-right: none;
+  background: var(--bg-panel);
   border-left: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;   /* for drag-handle absolute positioning */
+  grid-column: 3;
+  grid-row: 2;
 }
 
 .canvas-area {
   position: relative;
   overflow: hidden;
   background: var(--bg-base);
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;   /* prevent grid blowout */
 }
 
 /* ── Tab strip ───────────────────────────────────────────────────────────── */

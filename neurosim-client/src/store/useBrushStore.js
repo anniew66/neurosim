@@ -48,6 +48,21 @@ const useBrushStore = create((set) => ({
   setCursorPos(pos)     { set({ cursorPos: pos }) },
   setIsPainting(v)      { set({ isPainting: v }) },
 
+  // Chemical affinities to assign when painting neurons
+  // When brushChemsUseDefaults=true, morphology defaults are used instead.
+  brushChems: { releases: [], attracts: [], repels: [] },
+  brushChemsUseDefaults: true,
+
+  // Input / timing fields applied to newly painted neurons
+  brushIsInput:   false,
+  brushStartTime: 0,
+  setBrushIsInput(v)    { set({ brushIsInput: v }) },
+  setBrushStartTime(v)  { set({ brushStartTime: v }) },
+  setBrushChems(field, values) {
+    set(s => ({ brushChems: { ...s.brushChems, [field]: values } }))
+  },
+  setBrushChemsUseDefaults(v) { set({ brushChemsUseDefaults: v }) },
+
   // Density brush value (0-1)
   densityValue:     0.6,
   setDensityValue(v){ set({ densityValue: v }) },

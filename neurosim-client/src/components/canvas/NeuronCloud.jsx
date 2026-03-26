@@ -9,6 +9,7 @@ import { Instances, Instance } from '@react-three/drei'
 import * as THREE from 'three'
 
 import useSceneStore   from '../../store/useSceneStore.js'
+import useRegionStore  from '../../store/useRegionStore.js'
 import useBrushStore   from '../../store/useBrushStore.js'
 import useDisplayStore from '../../store/useDisplayStore.js'
 import { MORPHOLOGY_DEFAULTS } from '../../lib/neuronDefaults.js'
@@ -34,6 +35,7 @@ function NeuronInstance({ neuron, isSelected, onSelect, displayMag, selectionSca
       onClick={e => {
         if (useBrushStore.getState().mode !== 'select') return
         e.stopPropagation()
+        useRegionStore.getState().selectRegion(null)  // clear region selection
         onSelect(neuron.id)
       }}
     />
@@ -44,6 +46,7 @@ export default function NeuronCloud() {
   const neurons        = useSceneStore(s => s.neurons)
   const selectedId     = useSceneStore(s => s.selectedNeuronId)
   const selectNeuron   = useSceneStore(s => s.selectNeuron)
+  const clearRegion    = useRegionStore(s => s.selectRegion)
   const displayMag     = useDisplayStore(s => s.displayMagnification)
   const selectionScale = useDisplayStore(s => s.selectionScale)
 

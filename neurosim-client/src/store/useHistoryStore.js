@@ -13,10 +13,12 @@
 //   REMOVE_CHEMICALS — erased chemical source(s)     → re-add full objects
 //   CLEAR            — cleared everything            → restore full state
 //   COMPOSITE        — multiple sub-actions (erase = precise + chemicals + carve)
+//   DENSITY_STROKE   — density brush stroke      → restore pre-stroke grid snapshot
 
 import { create } from 'zustand'
 import useSceneStore  from './useSceneStore.js'
-import useRegionStore from './useRegionStore.js'
+import useRegionStore        from './useRegionStore.js'
+import useTissueDensityStore from './useTissueDensityStore.js'
 
 const MAX_HISTORY = 200   // cap memory usage
 
@@ -100,6 +102,12 @@ function executeUndo(entry) {
       for (let i = entry.actions.length - 1; i >= 0; i--) {
         executeUndo(entry.actions[i])
       }
+      break
+
+    // Density undo: restore the grid to its state before the stroke started.
+    // entry.before: Float32Array snapshot taken at pointerdown.
+    case 'DENSITY_STROKE':
+      useTissueDensityStore.getState().restoreGridSnapshot(entry.before)
       break
 
     default:

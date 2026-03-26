@@ -17,8 +17,8 @@ const useSimStore = create((set, get) => ({
     seed:                1,
     extent:              1.0,      // mm — default 1 mm cubic volume
     step_size:           0.003,    // mm — 3 µm per step
-    chemotaxis:          3.0,
-    random_walk:         0.5,
+    chemotaxis:          1.0,
+    random_walk:         1.2,
     synapse_radius:      0.003,    // mm — 3 µm contact zone
     max_steps:           5000,
     run_id:              1,

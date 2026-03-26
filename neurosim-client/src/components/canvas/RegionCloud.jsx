@@ -6,6 +6,7 @@ import { useRef, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 
 import useRegionStore  from '../../store/useRegionStore.js'
+import useSceneStore   from '../../store/useSceneStore.js'
 import useBrushStore   from '../../store/useBrushStore.js'
 import useDisplayStore from '../../store/useDisplayStore.js'
 import { MORPHOLOGY_DEFAULTS } from '../../lib/neuronDefaults.js'
@@ -75,7 +76,12 @@ export default function RegionCloud() {
           key={r.id}
           region={r}
           isSelected={r.id === selectedId}
-          onClick={id => { if (mode === 'select') selectRegion(id) }}
+          onClick={id => {
+            if (mode === 'select') {
+              useSceneStore.getState().clearSelection()  // clear neuron selection
+              selectRegion(id)
+            }
+          }}
           displayMag={displayMag}
           selectionScale={selectionScale}
         />

@@ -69,8 +69,9 @@ function SceneInner() {
   const pushHistory   = useHistoryStore(s => s.push)
   const addControlPoint = usePaintSurfaceStore(s => s.addControlPoint)
 
-  const strokeBuffer = useRef(new Float32Array(0))
-  const lastDabPos   = useRef(null)
+  const strokeBuffer          = useRef(new Float32Array(0))
+  const lastDabPos            = useRef(null)
+  const densityStrokeSnapshot = useRef(null)   // grid snapshot taken at stroke start
   const brushRef     = useRef({})
   const surfaceRef   = useRef({})
 
@@ -81,6 +82,9 @@ function SceneInner() {
         mode: s.mode, brushRadius: s.brushRadius, density: s.density,
         jitterAmount: s.jitterAmount, morphology: s.morphology,
         neuriteCount: s.neuriteCount, chemical: s.chemical,
+        brushChems: s.brushChems, brushChemsUseDefaults: s.brushChemsUseDefaults,
+        brushIsInput: s.brushIsInput ?? false,
+        brushStartTime: s.brushStartTime ?? 0,
       }
     })
     const s = useBrushStore.getState()
@@ -153,19 +157,23 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
 
       case 'point': {
         const defaults = getDefaults(b.morphology)
+        const useDefChems = b.brushChemsUseDefaults ?? true
         const neuron = {
           id: crypto.randomUUID(), soma: [cx, cy, cz],
           morphology:     b.morphology,
           soma_radius:    defaults.soma_radius,
-          releases:       [...defaults.releases],
-          attracts:       [...defaults.attracts],
-          repels:         [...defaults.repels],
+          releases: useDefChems ? [...defaults.releases] : [...(b.brushChems?.releases ?? [])],
+          attracts: useDefChems ? [...defaults.attracts] : [...(b.brushChems?.attracts ?? [])],
+          repels:   useDefChems ? [...defaults.repels]   : [...(b.brushChems?.repels   ?? [])],
           branch_prob:    defaults.branch_prob,
           max_branch_len: defaults.max_branch_length,
-          neurites: Array.from({ length: Math.max(1, b.neuriteCount) }, (_, i) => ({
-            azimuth:   (i / Math.max(1, b.neuriteCount)) * 360,
-            elevation: (Math.random() - 0.5) * 60,
-          })),
+          neurites:   [],
+          is_input:   b.brushIsInput   ?? false,
+          start_time: b.brushStartTime ?? 0,
+          input_mode:           'rate',
+          input_rate:           0.1,
+          input_sequence:       [],
+          input_emit_chemicals: false,
         }
         addNeurons([neuron])
         pushHistory({ type: 'ADD_PRECISE', neuronIds: [neuron.id] })
@@ -233,6 +241,12 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       setIsPainting(true)
       strokeBuffer.current = new Float32Array(0)
       lastDabPos.current   = null
+      // Snapshot density grid before any paint so we can undo the whole stroke
+      if (b.mode === 'density') {
+        densityStrokeSnapshot.current = useTissueDensityStore.getState().snapshotGrid()
+      } else {
+        densityStrokeSnapshot.current = null
+      }
       const hit = solveSurface()
       if (hit) applyDab(hit, b, e.shiftKey)
     }
@@ -259,11 +273,35 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       if (orbitRef.current) orbitRef.current.enabled = true
 
       const b = brushRef.current
+
+      // Commit density stroke undo — compare snapshot to detect actual change
+      if (b.mode === 'density' && densityStrokeSnapshot.current !== null) {
+        const before = densityStrokeSnapshot.current
+        const after  = useTissueDensityStore.getState().data
+        // Only push if at least one cell changed
+        let changed = false
+        for (let i = 0; i < before.length; i++) {
+          if (before[i] !== after[i]) { changed = true; break }
+        }
+        if (changed) pushHistory({ type: 'DENSITY_STROKE', before })
+        densityStrokeSnapshot.current = null
+      }
+
       if (b.mode === 'area' && strokeBuffer.current.length >= 3) {
         const positions = strokeBuffer.current
+        const useDefChems2 = b.brushChemsUseDefaults ?? true
         addRegion(positions, {
-          morphology: b.morphology, neuriteCount: b.neuriteCount,
-          releases: null, attracts: null, repels: null,
+          morphology:   b.morphology,
+          neuriteCount: b.neuriteCount,
+          releases: useDefChems2 ? null : [...(b.brushChems?.releases ?? [])],
+          attracts: useDefChems2 ? null : [...(b.brushChems?.attracts ?? [])],
+          repels:   useDefChems2 ? null : [...(b.brushChems?.repels   ?? [])],
+          is_input:             b.brushIsInput   ?? false,
+          start_time:           b.brushStartTime ?? 0,
+          input_mode:           'rate',
+          input_rate:           0.1,
+          input_sequence:       [],
+          input_emit_chemicals: false,
         })
         // Get the ID of the just-added region (last one in the store)
         const regions = useRegionStore.getState().regions
@@ -328,6 +366,13 @@ export default function SceneCanvas() {
       gl={{ antialias: true, alpha: false }}
       shadows
       style={{ background: '#1c1c1c' }}
+      onPointerMissed={() => {
+        // Click on empty space in select mode clears all selections
+        if (useBrushStore.getState().mode === 'select') {
+          useSceneStore.getState().clearSelection()
+          useRegionStore.getState().selectRegion(null)
+        }
+      }}
     >
       <SceneInner />
     </Canvas>

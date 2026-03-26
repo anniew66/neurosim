@@ -18,7 +18,10 @@ function structural_step!(model, t_struct::Int)
     # 3. Activate dormant neurons whose start_time has arrived
     activate_dormant_neurons!(model, t_struct)
 
-    # 4. Move active growth cones (gradient + tissue density + pause)
+    # 4a. Sprout new growth cones from somas based on local gradients
+    check_sprouting!(model, t_struct)
+
+    # 4b. Move active growth cones (gradient + tissue density + pause)
     move_growth_cones!(model)
 
     # 5. Retraction: probabilistically retract overextended cones
@@ -35,6 +38,9 @@ function structural_step!(model, t_struct::Int)
 
     # 9. Health decay, soma size update, death
     update_health!(model)
+
+    # 9b. Contact competition: retract redundant parallel dendrites
+    check_cone_competition!(model)
 
     # 10. Remove fully retracted growth cones
     remove_retracted!(model)
@@ -133,9 +139,12 @@ function move_growth_cones!(model)
         move_agent!(agent, new_pos, model)
 
         # Record shaft trajectory for primary neurites
+        # Only append if position changed (avoid duplicate waypoints on pause)
         if agent.branch_idx == 0
-            push!(nr.neurites[agent.neurite_idx].trajectory,
-                  (model.t, agent.pos))
+            traj = nr.neurites[agent.neurite_idx].trajectory
+            if isempty(traj) || norm(agent.pos - traj[end][2]) > model.step_size * 0.1
+                push!(traj, (model.t, agent.pos))
+            end
         end
 
         agent.branch_len += step_size
@@ -180,6 +189,222 @@ function check_retraction!(model)
         if agent.branch_len <= 0.001
             agent.retracted = true
         end
+    end
+end
+
+
+# ── Gradient-based neurite sprouting ──────────────────────────────────────────
+# Each structural step, each soma evaluates the local chemical gradient.
+# With some probability it sprouts a new growth cone in the gradient direction.
+# The FIRST sprout becomes the axon (longest reach); subsequent ones are dendrites.
+# This replaces pre-assigned neurite angles in the JSON config.
+
+# ── Sprouting constants ────────────────────────────────────────────────────────
+const MAX_DENDRITES        = 5       # max dendrite cones (axon is separate)
+const SPROUT_INTERVAL      = 20      # structural steps between sprout attempts
+const K_TERRITORY          = 4.0     # territory cone scale: θ = atan(K*r / L)
+# Minimum territory angle even for very long branches (prevents total collapse)
+const MIN_TERRITORY_DEG    = 15.0
+const AXON_NOISE           = 0.20    # low → axon committed to gradient
+const DEND_NOISE_BASE      = 0.5     # tangential spread noise for dendrites
+
+# Compute the territory half-angle (radians) claimed by a branch of length L
+# using soma radius r as a proxy for process diameter.
+# Wide when short (new branch claims large cone), narrows as branch grows.
+function territory_angle(branch_len::Float64, soma_radius::Float64)::Float64
+    min_rad = deg2rad(MIN_TERRITORY_DEG)
+    max(atan(K_TERRITORY * soma_radius / max(branch_len, soma_radius * 0.5)), min_rad)
+end
+
+# True if proposed direction `d` falls inside the territory cone of `cone`
+# (cone pointing from soma toward cone.pos, territory angle from its branch_len)
+function in_territory(d::SVector{3,Float64}, cone_dir::SVector{3,Float64},
+                      cone_len::Float64, soma_radius::Float64)::Bool
+    θ = territory_angle(cone_len, soma_radius)
+    # dot product = cos(angle between directions)
+    dot(d, cone_dir) > cos(θ)
+end
+
+# Generate N evenly-spread tangent directions around axis `ax`, with noise σ
+function spread_directions(ax::SVector{3,Float64}, n::Int,
+                           σ::Float64, rng)::Vector{SVector{3,Float64}}
+    # Build an orthonormal basis perpendicular to ax
+    ref = abs(ax[1]) < 0.9 ? SVector{3,Float64}(1,0,0) : SVector{3,Float64}(0,1,0)
+    u   = normalize(cross(ax, ref))
+    v   = normalize(cross(ax, u))
+    dirs = SVector{3,Float64}[]
+    for i in 0:(n-1)
+        φ = 2π * i / n + randn(rng) * 0.3   # even spacing + jitter
+        # Tilt away from axon by ~90-140 degrees (into dendritic hemisphere)
+        tilt = π * (0.55 + rand(rng) * 0.35)  # 100°–163° from axon
+        base = cos(tilt) * ax + sin(tilt) * (cos(φ)*u + sin(φ)*v)
+        noise_vec = SVector{3,Float64}(randn(rng), randn(rng), randn(rng)) * σ
+        d = base + noise_vec
+        nd = norm(d) > 1e-12 ? d / norm(d) : rand_unit_vec3(rng)
+        push!(dirs, nd)
+    end
+    dirs
+end
+
+function check_sprouting!(model, t_struct::Int)
+    t_struct % SPROUT_INTERVAL == 0 || return
+    rng = model.rng
+
+    for agent in allagents(model)
+        agent isa Soma || continue
+        agent.dormant  && continue
+
+        nid = agent.neuron_id
+        nr  = model.neurons[nid]
+        pos = agent.pos
+
+        # Gather all active cones: store (dir, branch_len, is_axon) tuples
+        # so we don't hold agent refs and can append placeholder entries safely
+        raw_cones = [a for a in allagents(model)
+                     if a isa GrowthCone && a.neuron_id == nid && !a.retracted]
+        existing = [(normalize(a.pos - pos + SVector{3,Float64}(1e-9,0,0)),
+                     a.branch_len, a.is_axon) for a in raw_cones]
+        n_axons = count(x -> x[3],  existing)
+        n_dends = count(x -> !x[3], existing)
+
+        # ── Soma radius for territory calculation ────────────────────────────
+        soma_r = nr.soma_radius_base
+
+        g       = net_chemical_gradient(pos, nr.attracts, nr.repels, model.chem_sources)
+        g_mag   = norm(g)
+        g_hat   = g_mag > 1e-12 ? g / g_mag : rand_unit_vec3(rng)
+
+        # ── AXON: ensure exactly one per neuron ─────────────────────────────
+        if n_axons == 0
+            p_axon = g_mag > 1e-10 ? 0.18 : (t_struct > 40 ? 0.06 : 0.015)
+            if rand(rng) < p_axon
+                noise    = SVector{3,Float64}(randn(rng), randn(rng), randn(rng)) * AXON_NOISE
+                dir      = g_hat + noise
+                dir_norm = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
+
+                # Axon must not be within 90° of any existing dendrite
+                axon_blocked_by_dend = any(dot(dir_norm, ed) > 0.0
+                                           for (ed, _, is_ax) in existing if !is_ax)
+                # Also check territory for non-strong signals
+                blocked = axon_blocked_by_dend ||
+                          (g_mag < 0.5 && any(in_territory(dir_norm, ed, el, soma_r)
+                                              for (ed, el, _) in existing))
+                if !blocked
+                    az = rad2deg(atan(dir_norm[2], dir_norm[1]))
+                    el_deg = rad2deg(asin(clamp(dir_norm[3], -1.0, 1.0)))
+                    push!(nr.neurites, NeuriteSpec(az, el_deg, true,
+                          Vector{Tuple{Int,SVector{3,Float64}}}()))
+                    ni = length(nr.neurites)
+                    gc_pos = clamp_to_box(pos + dir_norm * model.step_size, model.lo, model.hi)
+                    add_agent!(gc_pos, GrowthCone, model,
+                               dir_norm, nid, ni, 0, true, 0, 0.0, false,
+                               copy(nr.attracts), copy(nr.repels))
+                    # Record axon direction so dendrites can enforce polarity
+                    nr.axon_dir = dir_norm
+                end
+            end
+            continue   # one action per step: axon OR dendrite, not both
+        end
+
+        # ── DENDRITES: spread evenly around cell, biased away from axon ─────
+        n_dends >= MAX_DENDRITES && continue
+        p_sprout = 0.012 + 0.04 * tanh(g_mag * 2.0)
+        rand(rng) < p_sprout || continue
+
+        # How many new dendrites to attempt this step (usually 1)
+        n_want = min(2, MAX_DENDRITES - n_dends)
+
+        # Use stored axon direction as the pole to spread dendrites opposite to.
+        # If axon not yet committed, use gradient direction as proxy.
+        axon_pole = nr.axon_dir !== nothing ? nr.axon_dir : g_hat
+
+        # Generate candidate directions spread around the axon axis
+        # (tilt 100°-163° away from axon → dendritic hemisphere)
+        candidates = spread_directions(axon_pole, n_want * 3, DEND_NOISE_BASE, rng)
+
+        added = 0
+        for dir_norm in candidates
+            added >= n_want && break
+
+            # ── Hard polarity constraint: dendrites must be > 90° from axon ──
+            # dot(dendrite, axon) > 0 means angle < 90° → reject
+            if dot(dir_norm, axon_pole) > 0.0
+                continue
+            end
+
+            # Also reject if < 75° from any OTHER dendrite's direction (spread)
+            too_crowded = any(dot(dir_norm, ed) > cos(deg2rad(75.0))
+                              for (ed, _, is_ax) in existing if !is_ax)
+            too_crowded && continue
+
+            # Territory exclusion: reject if inside any existing cone's territory
+            blocked = any(in_territory(dir_norm, ed, el, soma_r)
+                          for (ed, el, _) in existing)
+            blocked && continue
+
+            az = rad2deg(atan(dir_norm[2], dir_norm[1]))
+            el = rad2deg(asin(clamp(dir_norm[3], -1.0, 1.0)))
+            push!(nr.neurites, NeuriteSpec(az, el, false,
+                  Vector{Tuple{Int,SVector{3,Float64}}}()))
+            ni = length(nr.neurites)
+            gc_pos = clamp_to_box(pos + dir_norm * model.step_size, model.lo, model.hi)
+            add_agent!(gc_pos, GrowthCone, model,
+                       dir_norm, nid, ni, 0, false, 0, 0.0, false,
+                       copy(nr.attracts), copy(nr.repels))
+            # Add to existing so next candidate respects this new cone's territory
+            push!(existing, (dir_norm, model.step_size, false))
+            added += 1
+        end
+    end
+end
+
+# ── Territory-based cone competition ──────────────────────────────────────────
+# For each pair of same-type cones of the same neuron, if one's territory cone
+# fully contains the other's direction, the shorter one is retracted.
+# This is O(n_cones²) per neuron but neurons have ≤ MAX_DENDRITES+1 cones.
+function check_cone_competition!(model)
+    cones_by_nid = Dict{String, Vector{Any}}()
+    for a in allagents(model)
+        a isa GrowthCone && !a.retracted || continue
+        push!(get!(cones_by_nid, a.neuron_id, []), a)
+    end
+
+    to_retract = Set{Int}()
+    for (nid, cones) in cones_by_nid
+        length(cones) < 2 && continue
+        soma_id = get(model.soma_agent_ids, nid, 0)
+        soma_id == 0 && continue
+        soma_pos = model[soma_id].pos
+        soma_r   = model.neurons[nid].soma_radius_base
+
+        for i in 1:length(cones)
+            cones[i].id in to_retract && continue
+            for j in (i+1):length(cones)
+                cones[j].id in to_retract && continue
+                # Only compete same-type
+                cones[i].is_axon == cones[j].is_axon || continue
+                cones[i].is_axon && continue  # axons don't compete with each other
+
+                di = normalize(cones[i].pos - soma_pos + SVector{3,Float64}(1e-9,0,0))
+                dj = normalize(cones[j].pos - soma_pos + SVector{3,Float64}(1e-9,0,0))
+
+                li = cones[i].branch_len; lj = cones[j].branch_len
+
+                # If i's territory contains j's direction → j is in i's shadow
+                if in_territory(dj, di, li, soma_r)
+                    # Longer branch wins; shorter retracts
+                    loser = li >= lj ? cones[j].id : cones[i].id
+                    push!(to_retract, loser)
+                elseif in_territory(di, dj, lj, soma_r)
+                    loser = lj >= li ? cones[i].id : cones[j].id
+                    push!(to_retract, loser)
+                end
+            end
+        end
+    end
+
+    for id in to_retract
+        hasid(model, id) && (model[id].retracted = true)
     end
 end
 

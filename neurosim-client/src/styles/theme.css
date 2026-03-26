@@ -63,4 +63,10 @@
   /* ── Shadows ────────────────────────────────────────────────────────────── */
   --shadow-sm:  0 1px 3px rgba(0,0,0,0.4);
   --shadow-md:  0 2px 8px rgba(0,0,0,0.5);
+
+  /* ── Compatibility aliases ──────────────────────────────────────────────────── */
+  --accent-chem: var(--accent-teal);
+  --accent-axon: var(--accent-blue-lt);
+  --accent-dend: var(--accent-red);
+  --accent-warn: var(--accent-amber);
 }

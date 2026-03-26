@@ -110,7 +110,7 @@ export function makeNeurite(azimuth = 0, elevation = 0) {
   return { azimuth, elevation }
 }
 
-export function makeNeuron(position, morphology = 'generic', extraNeurites = []) {
+export function makeNeuron(position, morphology = 'generic') {
   const defaults = getDefaults(morphology)
   return {
     id:         crypto.randomUUID(),
@@ -122,9 +122,14 @@ export function makeNeuron(position, morphology = 'generic', extraNeurites = [])
     branch_prob:    defaults.branch_prob,
     max_branch_len: defaults.max_branch_length,
     soma_radius:    defaults.soma_radius,
-    neurites: [
-      makeNeurite(0, 0),
-      ...extraNeurites,
-    ],
+    // Neurites sprout from gradients during simulation
+    neurites: [],
+    // Input / timing fields
+    is_input:             false,
+    start_time:           0,
+    input_mode:           'rate',      // 'rate' | 'sequence'
+    input_rate:           0.1,         // probability per ms step
+    input_sequence:       [],          // binary array for sequence mode
+    input_emit_chemicals: false,
   }
 }
