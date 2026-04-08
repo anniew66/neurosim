@@ -19,6 +19,7 @@ import { create } from 'zustand'
 import useSceneStore  from './useSceneStore.js'
 import useRegionStore        from './useRegionStore.js'
 import useTissueDensityStore from './useTissueDensityStore.js'
+import useChemPaintStore     from './useChemPaintStore.js'
 
 const MAX_HISTORY = 200   // cap memory usage
 
@@ -104,10 +105,14 @@ function executeUndo(entry) {
       }
       break
 
-    // Density undo: restore the grid to its state before the stroke started.
-    // entry.before: Float32Array snapshot taken at pointerdown.
+    // Density undo: restore strokes to their state before the stroke started.
     case 'DENSITY_STROKE':
-      useTissueDensityStore.getState().restoreGridSnapshot(entry.before)
+      useTissueDensityStore.getState().restoreStrokes(entry.before)
+      break
+
+    // Chemical stroke undo: restore all channels to their state before the stroke.
+    case 'CHEM_STROKE':
+      useChemPaintStore.getState().restoreChannels(entry.before)
       break
 
     default:

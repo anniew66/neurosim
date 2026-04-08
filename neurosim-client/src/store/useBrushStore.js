@@ -28,9 +28,10 @@ const useBrushStore = create((set) => ({
 
   // ── Chemical brush ─────────────────────────────────────────────────────────
   chemical: {
-    name:     'BDNF',
-    sigma:    3.0,
-    strength: 1.0,
+    name:         'BDNF',
+    sigma:        3.0,
+    strength:     1.0,
+    brushDensity: 0.6,
   },
 
   // ── Pointer state ──────────────────────────────────────────────────────────

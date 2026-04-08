@@ -56,6 +56,11 @@ const K_TORTUOSITY      = 1.5     # random walk boost per unit density
 const K_COMPRESS        = 0.4     # sigma reduction per unit density
 const K_NOISE           = 0.8     # gradient noise per unit density
 const K_PAUSE           = 0.15   # pause probability boost per unit density
+const PERSISTENCE_LAMBDA = 0.25  # direction persistence weight (0 = none, 1 = full inertia)
+
+# ── Output throttling ────────────────────────────────────────────────────────
+const VTK_INTERVAL      = 10     # write VTK frame every N structural steps
+const STREAM_INTERVAL   = 5      # push live state to browser every N steps
 
 # ── Per-morphology BCM thresholds ────────────────────────────────────────────
 # theta_ltd:  calcium level below which LTD occurs (depotentiation)
@@ -99,6 +104,31 @@ const MORPHOLOGY_DEFAULTS = Dict(
 
 function morphology_defaults(morphology::String)
     get(MORPHOLOGY_DEFAULTS, lowercase(morphology), MORPHOLOGY_DEFAULTS["generic"])
+end
+
+# ── NMDA sigmoid look-up table ────────────────────────────────────────────────
+# Replaces 1/(1+exp(-x)) in the electrical hot path with a 1024-entry LUT +
+# linear interpolation (max error ≈ 1e-5).  The argument to the sigmoid in the
+# NMDA gate is (V - THETA_NMDA) * 10, which spans roughly [-15, 15].
+const NMDA_LUT_SIZE  = 1024
+const NMDA_LUT_LO    = -15.0
+const NMDA_LUT_HI    =  15.0
+const NMDA_LUT_SCALE = (NMDA_LUT_SIZE - 1) / (NMDA_LUT_HI - NMDA_LUT_LO)
+
+function build_nmda_lut()::Vector{Float64}
+    lut = Vector{Float64}(undef, NMDA_LUT_SIZE)
+    for i in 1:NMDA_LUT_SIZE
+        x = NMDA_LUT_LO + (i - 1) / NMDA_LUT_SCALE
+        lut[i] = 1.0 / (1.0 + exp(-x))
+    end
+    lut
+end
+
+@inline function nmda_lut_lookup(lut::Vector{Float64}, x::Float64)::Float64
+    t = (x - NMDA_LUT_LO) * NMDA_LUT_SCALE
+    i = clamp(floor(Int, t), 0, NMDA_LUT_SIZE - 2)
+    frac = t - i
+    @inbounds lut[i+1] * (1.0 - frac) + lut[i+2] * frac
 end
 
 # ── Retraction probability ────────────────────────────────────────────────────

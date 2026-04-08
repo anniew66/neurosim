@@ -23,12 +23,24 @@ function ChemicalSettings() {
           ))}
         </select>
       </div>
+
+      <SliderWithInput label="Brush value" value={chemical.brushDensity ?? 0.6}
+        min={-1} max={1} rangeSpan={0.5} unit="%"
+        onChange={v => setChemical({ brushDensity: v })}
+        format={v => (v >= 0 ? '+' : '') + Math.round(v * 100)} />
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 12 }}>
+        Positive = paint field. Negative = erase/carve through existing fields.
+      </div>
+
       <SliderWithInput label="Diffusion σ" value={chemical.sigma ?? 3.0}
         absMin={0.0001} absMax={50} unit="mm" log
         onChange={v => setChemical({ sigma: v })} />
-      <SliderWithInput label="Strength" value={chemical.strength ?? 1.0}
+      <SliderWithInput label="Source strength" value={chemical.strength ?? 1.0}
         absMin={0} absMax={20} unit="×"
         onChange={v => setChemical({ strength: v })} />
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Point-source intensity placed at the stroke centroid.
+      </div>
     </>
   )
 }
@@ -37,79 +49,44 @@ function ChemicalSettings() {
 function DensityBrushSettings() {
   const brushDensity = useTissueDensityStore(s => s.brushDensity)
   const setBrush     = useTissueDensityStore(s => s.setBrushDensity)
-  const baseDensity  = useTissueDensityStore(s => s.baseDensity)
-  const setBase      = useTissueDensityStore(s => s.setBaseDensity)
-  const clearGrid    = useTissueDensityStore(s => s.clearGrid)
+  const diffusion    = useTissueDensityStore(s => s.diffusion)
+  const setDiffusion = useTissueDensityStore(s => s.setDiffusion)
+  const clearStrokes = useTissueDensityStore(s => s.clearStrokes)
   const isEmpty      = useTissueDensityStore(s => s.isEmpty)
-  const cellDensity  = useTissueDensityStore(s => s.neuropilCellDensity)
-  const blobRadius   = useTissueDensityStore(s => s.neuropilBlobRadius)
-  const intensity    = useTissueDensityStore(s => s.neuropilIntensity)
-  const setCellDensity  = useTissueDensityStore(s => s.setNeuropilCellDensity)
-  const setBlobRadius   = useTissueDensityStore(s => s.setNeuropilBlobRadius)
-  const setIntensity    = useTissueDensityStore(s => s.setNeuropilIntensity)
+  const strokeCount  = useTissueDensityStore(s => s.strokes.length)
 
   return (
     <>
       <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 10 }}>
-        Paint neuropil density onto the surface. Dense regions slow growth cones,
+        Click or drag to paint density fields. Dense regions slow growth cones,
         add gradient noise, and compress chemical diffusion.
       </div>
-
-      <SliderWithInput label="Base density (whole volume)" value={baseDensity}
-        min={0} max={1} rangeSpan={0.5} unit="%"
-        onChange={setBase} format={v => `${Math.round(v * 100)}`} />
 
       <SliderWithInput label="Brush value" value={brushDensity}
         min={-1} max={1} rangeSpan={0.5} unit="%"
         onChange={setBrush}
         format={v => (v >= 0 ? '+' : '') + Math.round(v * 100)} />
       <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 12 }}>
-        Positive = add density. Negative = carve corridor. Ctrl+Z undoes each stroke.
+        Positive = paint. Negative = erase. Ctrl+Z undoes each stroke.
       </div>
 
-      <div className="panel-label">Procedural Neuropil</div>
-      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 10, lineHeight: 1.5 }}>
-        Fill the volume with random neuron-sized blobs leaving narrow gaps.
+      <SliderWithInput label="Diffusion" value={diffusion}
+        min={0} max={10} rangeSpan={5} unit="x"
+        onChange={setDiffusion}
+        format={v => v.toFixed(1)} />
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 12, lineHeight: 1.5 }}>
+        Extends each stroke beyond its painted radius. Higher values = softer,
+        wider spread. Dotted contour shows where concentration falls off.
       </div>
 
-      <SliderWithInput label="Cell density" value={cellDensity}
-        min={10} max={200000} unit="/mm³" log
-        onChange={setCellDensity}
-        format={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)} />
-
-      <div style={{ marginBottom: 8 }}>
-        <div className="ns-label">Blob radius</div>
-        <div style={{ display: 'flex', gap: 5, marginBottom: 5 }}>
-          {Object.entries(MORPHOLOGY_DEFAULTS).map(([k, d]) => (
-            <button key={k} className="ns-btn"
-              style={{ fontSize: 9, padding: '2px 6px', flex: 1,
-                borderColor: Math.abs(blobRadius - d.soma_radius) < 0.0001
-                  ? 'var(--accent-blue)' : 'var(--border-mid)',
-                color: Math.abs(blobRadius - d.soma_radius) < 0.0001
-                  ? 'var(--text-primary)' : 'var(--text-dim)' }}
-              title={`${k}: ${(d.soma_radius*1000).toFixed(1)} µm`}
-              onClick={() => setBlobRadius(d.soma_radius)}>
-              {k.slice(0,3)}
-            </button>
-          ))}
-        </div>
-        <SliderWithInput value={blobRadius} min={0.001} max={0.1} unit="mm" log
-          onChange={setBlobRadius} format={v => `${(v*1000).toFixed(1)} µm`} />
-      </div>
-
-      <SliderWithInput label="Blob intensity" value={intensity}
-        min={0.05} max={1} rangeSpan={0.4} unit=""
-        onChange={setIntensity} format={v => `${Math.round(v * 100)}%`} />
-
-      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-        <button className="ns-btn primary" style={{ flex: 1 }}
-          onClick={() => useTissueDensityStore.getState().initNeuropil()}>
-          Generate
-        </button>
-        <button className="ns-btn danger" style={{ flex: 1 }}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+        <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+          {strokeCount} stroke{strokeCount !== 1 ? 's' : ''}
+        </span>
+        <button className="ns-btn danger" style={{ fontSize: 11, padding: '3px 12px' }}
           disabled={isEmpty()}
-          onClick={clearGrid}>
-          Clear
+          onClick={clearStrokes}>
+          Clear all
         </button>
       </div>
     </>
@@ -274,7 +251,7 @@ export default function BrushPanel() {
   const setDensity     = useBrushStore(s => s.setDensity)
   const setJitter      = useBrushStore(s => s.setJitter)
 
-  const showRadius       = ['point', 'area', 'carve', 'promote', 'erase', 'density'].includes(mode)
+  const showRadius       = ['point', 'area', 'carve', 'promote', 'erase', 'density', 'chemical'].includes(mode)
   const showAreaDensity  = mode === 'area'      // density/scatter sliders inside area brush
   const showIdent        = ['point', 'area'].includes(mode)
   const showDensityBrush = mode === 'density'   // tissue density brush settings panel

@@ -22,6 +22,7 @@ import useRegionStore       from '../../store/useRegionStore.js'
 import usePaintSurfaceStore from '../../store/usePaintSurfaceStore.js'
 import useHistoryStore       from '../../store/useHistoryStore.js'
 import useTissueDensityStore from '../../store/useTissueDensityStore.js'
+import useChemPaintStore     from '../../store/useChemPaintStore.js'
 import { getDefaults }      from '../../lib/neuronDefaults.js'
 import { raySurfaceIntersect, evalHeight } from '../../lib/surfaceMath.js'
 
@@ -71,7 +72,10 @@ function SceneInner() {
 
   const strokeBuffer          = useRef(new Float32Array(0))
   const lastDabPos            = useRef(null)
-  const densityStrokeSnapshot = useRef(null)   // grid snapshot taken at stroke start
+  const densityStrokeSnapshot = useRef(null)   // density snapshot taken at stroke start
+  const densityStrokeBuffer   = useRef(null)   // collected density dabs — committed on pointerUp
+  const chemStrokeSnapshot    = useRef(null)   // chem channels snapshot taken at stroke start
+  const chemStrokeBuffer      = useRef(null)   // collected chemical dabs — committed on pointerUp
   const brushRef     = useRef({})
   const surfaceRef   = useRef({})
 
@@ -181,8 +185,9 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       }
 
       case 'chemical': {
-        // Accumulate stroke positions — merged into one weighted source on pointerUp
-        // This avoids spawning hundreds of individual sources while dragging
+        if (!chemStrokeBuffer.current) chemStrokeBuffer.current = []
+        chemStrokeBuffer.current.push([cx, cy, cz])
+        // Also accumulate for centroid calculation (chemical source)
         const pts = strokeBuffer.current
         const newPts = new Float32Array(pts.length + 3)
         newPts.set(pts)
@@ -221,9 +226,8 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       }
 
       case 'density': {
-        // Paint or erase density depending on brushDensity sign
-        const densStore = useTissueDensityStore.getState()
-        densStore.paint(cx, cy, cz, b.brushRadius)
+        if (!densityStrokeBuffer.current) densityStrokeBuffer.current = []
+        densityStrokeBuffer.current.push([cx, cy, cz])
         break
       }
 
@@ -242,13 +246,20 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
         if (orbitRef.current) orbitRef.current.enabled = false
       }
       setIsPainting(true)
-      strokeBuffer.current = new Float32Array(0)
-      lastDabPos.current   = null
-      // Snapshot density grid before any paint so we can undo the whole stroke
+      strokeBuffer.current        = new Float32Array(0)
+      lastDabPos.current          = null
+      densityStrokeBuffer.current = null
+      chemStrokeBuffer.current    = null
+      // Snapshot before any paint so we can undo the whole stroke
       if (b.mode === 'density') {
-        densityStrokeSnapshot.current = useTissueDensityStore.getState().snapshotGrid()
+        densityStrokeSnapshot.current = useTissueDensityStore.getState().snapshotStrokes()
       } else {
         densityStrokeSnapshot.current = null
+      }
+      if (b.mode === 'chemical') {
+        chemStrokeSnapshot.current = useChemPaintStore.getState().snapshotChannels()
+      } else {
+        chemStrokeSnapshot.current = null
       }
       const hit = solveSurface()
       if (hit) applyDab(hit, b, e.shiftKey)
@@ -259,13 +270,15 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       const b   = brushRef.current
       const hit = solveSurface()
       if (!hit) return
-      // Density brush: no distance gate — paint continuously as cursor moves
-      if (b.mode !== 'density' && b.mode !== 'chemical') {
-        if (lastDabPos.current) {
-          const dx = hit[0] - lastDabPos.current[0]
-          const dz = hit[2] - lastDabPos.current[2]
-          if (dx*dx + dz*dz < b.brushRadius * b.brushRadius * 0.15) return
-        }
+      // Distance gate: density/chemical use moderate spacing for overlapping
+      // contiguous blobs; other modes use tight spacing.
+      const threshold = b.mode === 'density' ? 0.5
+                      : b.mode === 'chemical' ? 0.5
+                      : 0.15
+      if (lastDabPos.current) {
+        const dx = hit[0] - lastDabPos.current[0]
+        const dz = hit[2] - lastDabPos.current[2]
+        if (dx*dx + dz*dz < b.brushRadius * b.brushRadius * threshold) return
       }
       lastDabPos.current = [...hit]
       applyDab(hit, b, e.shiftKey)
@@ -277,7 +290,35 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
 
       const b = brushRef.current
 
-      // Commit chemical stroke: merge all drag positions into one source at centroid
+      // Commit density stroke as a single tube stroke (positive = paint, negative = erase/carve)
+      if (b.mode === 'density' && densityStrokeBuffer.current?.length > 0) {
+        const points = densityStrokeBuffer.current
+        const densStore = useTissueDensityStore.getState()
+        // Both positive and negative density use addStroke — negative strokes
+        // render with ReverseSubtractEquation to carve through existing fields.
+        densStore.addStroke(points, b.brushRadius, densStore.brushDensity)
+        densityStrokeBuffer.current = null
+
+        const before = densityStrokeSnapshot.current
+        if (before !== null) {
+          pushHistory({ type: 'DENSITY_STROKE', before })
+          densityStrokeSnapshot.current = null
+        }
+      }
+
+      // Commit chemical stroke as a single tube stroke
+      // Positive brushDensity paints; negative carves through existing fields.
+      if (b.mode === 'chemical' && chemStrokeBuffer.current?.length > 0) {
+        const chemDensity = b.chemical.brushDensity ?? 0.6
+        useChemPaintStore.getState().addStroke(b.chemical.name, chemStrokeBuffer.current, b.brushRadius, chemDensity)
+        chemStrokeBuffer.current = null
+
+        const before = chemStrokeSnapshot.current
+        if (before !== null) {
+          pushHistory({ type: 'CHEM_STROKE', before })
+          chemStrokeSnapshot.current = null
+        }
+      }
       if (b.mode === 'chemical' && strokeBuffer.current.length >= 3) {
         const pts = strokeBuffer.current
         const n   = pts.length / 3
@@ -297,19 +338,6 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
         addChemicals([chem])
         pushHistory({ type: 'ADD_CHEMICALS', chemIds: [chem.id] })
         strokeBuffer.current = new Float32Array(0)
-      }
-
-      // Commit density stroke undo — compare snapshot to detect actual change
-      if (b.mode === 'density' && densityStrokeSnapshot.current !== null) {
-        const before = densityStrokeSnapshot.current
-        const after  = useTissueDensityStore.getState().data
-        // Only push if at least one cell changed
-        let changed = false
-        for (let i = 0; i < before.length; i++) {
-          if (before[i] !== after[i]) { changed = true; break }
-        }
-        if (changed) pushHistory({ type: 'DENSITY_STROKE', before })
-        densityStrokeSnapshot.current = null
       }
 
       if (b.mode === 'area' && strokeBuffer.current.length >= 3) {

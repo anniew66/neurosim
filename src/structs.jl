@@ -123,6 +123,68 @@ function SynapseRecord(id, pre_nid, post_nid, pre_gc, post_gc, is_axosomatic, di
                   0.0, 0.0, 0.0, 0.0, 0)
 end
 
+# ── Struct-of-arrays for electrical hot path ──────────────────────────────────
+# Mirrors NeuronElecState and SynapseRecord as contiguous vectors for the 100
+# electrical substeps.  Built from Dicts before the substep block, written back
+# after.  Eliminates per-synapse Dict lookups and exp() calls in the inner loop.
+mutable struct ElecArrays
+    # ── Neuron dimension (N) ─────────────────────────────────────────
+    n_neurons       :: Int
+    V               :: Vector{Float64}       # membrane potential
+    refractory      :: Vector{Int}           # refractory countdown
+    fired           :: Vector{Bool}          # fired this step
+    fire_rate       :: Vector{Float64}       # EMA firing rate
+    is_input        :: Vector{Bool}          # true for input neurons
+    is_active       :: Vector{Bool}          # false if dormant/dead/missing
+    seq_ptr         :: Vector{Int}           # sequence playback pointer
+
+    # Input specs (valid only where is_input[i])
+    input_mode      :: Vector{Symbol}        # :rate or :sequence
+    input_rate      :: Vector{Float64}       # rate-mode probability
+    input_seq       :: Vector{Vector{Bool}}  # sequence patterns
+
+    # Index mapping
+    nid_to_idx      :: Dict{String,Int}
+    idx_to_nid      :: Vector{String}
+
+    # ── Synapse dimension (S) ────────────────────────────────────────
+    n_synapses      :: Int
+    pre_idx         :: Vector{Int}           # index into neuron arrays
+    post_idx        :: Vector{Int}           # index into neuron arrays
+    syn_size        :: Vector{Float64}       # mutable by BCM
+    attenuation     :: Vector{Float64}       # immutable after creation
+    decay           :: Vector{Float64}       # precomputed exp(-DT/tau_syn)
+    V_syn           :: Vector{Float64}       # synaptic potential integrator
+    c_i             :: Vector{Float64}       # instantaneous NMDA calcium
+    c_bar           :: Vector{Float64}       # running avg calcium
+    sigma_stab      :: Vector{Float64}       # slow stability average
+
+    # Synapse index mapping
+    sid_to_idx      :: Dict{Int,Int}
+    idx_to_sid      :: Vector{Int}
+
+    # ── Scratch / LUT ────────────────────────────────────────────────
+    V_input         :: Vector{Float64}       # [N] zeroed each LIF step
+    nmda_lut        :: Vector{Float64}       # prebuilt sigmoid table
+    _sid_buf        :: Vector{Int}           # reusable buffer for rebuild
+end
+
+function ElecArrays()
+    ElecArrays(
+        0,                                   # n_neurons
+        Float64[], Int[], Bool[], Float64[], Bool[], Bool[], Int[],
+        Symbol[], Float64[], Vector{Bool}[],
+        Dict{String,Int}(), String[],
+        0,                                   # n_synapses
+        Int[], Int[], Float64[], Float64[], Float64[], Float64[],
+        Float64[], Float64[], Float64[],
+        Dict{Int,Int}(), Int[],
+        Float64[],                           # V_input scratch
+        build_nmda_lut(),                    # nmda_lut
+        Int[],                               # _sid_buf
+    )
+end
+
 # ── Tissue density grid ───────────────────────────────────────────────────────
 # Flat 3D Float32 array. Evaluated via trilinear interpolation.
 struct TissueDensityGrid
