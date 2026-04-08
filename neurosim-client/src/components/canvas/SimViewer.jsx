@@ -157,15 +157,19 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
     const somas = shared.somas || []
     somaData.current = somas
     const ns = Math.min(somas.length, SOMA_CAP)
+    let rendered = 0
     for (let i = 0; i < ns; i++) {
       const s = somas[i]
+      // Hide dead neurons after their time of death
+      if (s.dead && displayT >= s.death_t) continue
       somaDummy.position.set(s.pos[0], s.pos[1], s.pos[2])
       somaDummy.scale.setScalar(Math.max(ext * 0.003, s.r * somaScaleRef.current))
       somaDummy.updateMatrix()
-      sm.setMatrixAt(i, somaDummy.matrix)
-      sm.setColorAt(i, somaColor(s.h ?? 1, s.firing ?? 0))
+      sm.setMatrixAt(rendered, somaDummy.matrix)
+      sm.setColorAt(rendered, somaColor(s.h ?? 1, s.firing ?? 0))
+      rendered++
     }
-    sm.count = ns
+    sm.count = rendered
     sm.instanceMatrix.needsUpdate = true
     if (sm.instanceColor) sm.instanceColor.needsUpdate = true
 

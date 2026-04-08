@@ -23,12 +23,24 @@ function ChemicalSettings() {
           ))}
         </select>
       </div>
+
+      <SliderWithInput label="Brush value" value={chemical.brushDensity ?? 0.6}
+        min={-1} max={1} rangeSpan={0.5} unit="%"
+        onChange={v => setChemical({ brushDensity: v })}
+        format={v => (v >= 0 ? '+' : '') + Math.round(v * 100)} />
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 12 }}>
+        Positive = paint field. Negative = erase/carve through existing fields.
+      </div>
+
       <SliderWithInput label="Diffusion σ" value={chemical.sigma ?? 3.0}
         absMin={0.0001} absMax={50} unit="mm" log
         onChange={v => setChemical({ sigma: v })} />
-      <SliderWithInput label="Strength" value={chemical.strength ?? 1.0}
+      <SliderWithInput label="Source strength" value={chemical.strength ?? 1.0}
         absMin={0} absMax={20} unit="×"
         onChange={v => setChemical({ strength: v })} />
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Point-source intensity placed at the stroke centroid.
+      </div>
     </>
   )
 }
@@ -239,7 +251,7 @@ export default function BrushPanel() {
   const setDensity     = useBrushStore(s => s.setDensity)
   const setJitter      = useBrushStore(s => s.setJitter)
 
-  const showRadius       = ['point', 'area', 'carve', 'promote', 'erase', 'density'].includes(mode)
+  const showRadius       = ['point', 'area', 'carve', 'promote', 'erase', 'density', 'chemical'].includes(mode)
   const showAreaDensity  = mode === 'area'      // density/scatter sliders inside area brush
   const showIdent        = ['point', 'area'].includes(mode)
   const showDensityBrush = mode === 'density'   // tissue density brush settings panel

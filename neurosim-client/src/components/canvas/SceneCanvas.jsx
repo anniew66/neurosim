@@ -72,8 +72,9 @@ function SceneInner() {
 
   const strokeBuffer          = useRef(new Float32Array(0))
   const lastDabPos            = useRef(null)
-  const densityStrokeSnapshot = useRef(null)   // blob snapshot taken at stroke start
+  const densityStrokeSnapshot = useRef(null)   // density snapshot taken at stroke start
   const densityStrokeBuffer   = useRef(null)   // collected density dabs — committed on pointerUp
+  const chemStrokeSnapshot    = useRef(null)   // chem channels snapshot taken at stroke start
   const chemStrokeBuffer      = useRef(null)   // collected chemical dabs — committed on pointerUp
   const brushRef     = useRef({})
   const surfaceRef   = useRef({})
@@ -249,11 +250,16 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
       lastDabPos.current          = null
       densityStrokeBuffer.current = null
       chemStrokeBuffer.current    = null
-      // Snapshot density blobs before any paint so we can undo the whole stroke
+      // Snapshot before any paint so we can undo the whole stroke
       if (b.mode === 'density') {
         densityStrokeSnapshot.current = useTissueDensityStore.getState().snapshotStrokes()
       } else {
         densityStrokeSnapshot.current = null
+      }
+      if (b.mode === 'chemical') {
+        chemStrokeSnapshot.current = useChemPaintStore.getState().snapshotChannels()
+      } else {
+        chemStrokeSnapshot.current = null
       }
       const hit = solveSurface()
       if (hit) applyDab(hit, b, e.shiftKey)
@@ -284,31 +290,34 @@ addControlPoint(cx, cz, cy - (params.offsetY ?? 0))
 
       const b = brushRef.current
 
-      // Commit density stroke as a single tube stroke
+      // Commit density stroke as a single tube stroke (positive = paint, negative = erase/carve)
       if (b.mode === 'density' && densityStrokeBuffer.current?.length > 0) {
         const points = densityStrokeBuffer.current
         const densStore = useTissueDensityStore.getState()
-        if (densStore.brushDensity > 0) {
-          densStore.addStroke(points, b.brushRadius, densStore.brushDensity)
-        } else if (densStore.brushDensity < 0) {
-          densStore.removeStrokesBatch(points.map(p => ({ center: p, radius: b.brushRadius })))
-        }
+        // Both positive and negative density use addStroke — negative strokes
+        // render with ReverseSubtractEquation to carve through existing fields.
+        densStore.addStroke(points, b.brushRadius, densStore.brushDensity)
         densityStrokeBuffer.current = null
 
         const before = densityStrokeSnapshot.current
         if (before !== null) {
-          const after = useTissueDensityStore.getState().strokes
-          if (before.length !== after.length) {
-            pushHistory({ type: 'DENSITY_STROKE', before })
-          }
+          pushHistory({ type: 'DENSITY_STROKE', before })
           densityStrokeSnapshot.current = null
         }
       }
 
       // Commit chemical stroke as a single tube stroke
+      // Positive brushDensity paints; negative carves through existing fields.
       if (b.mode === 'chemical' && chemStrokeBuffer.current?.length > 0) {
-        useChemPaintStore.getState().addStroke(b.chemical.name, chemStrokeBuffer.current, b.brushRadius, 0.6)
+        const chemDensity = b.chemical.brushDensity ?? 0.6
+        useChemPaintStore.getState().addStroke(b.chemical.name, chemStrokeBuffer.current, b.brushRadius, chemDensity)
         chemStrokeBuffer.current = null
+
+        const before = chemStrokeSnapshot.current
+        if (before !== null) {
+          pushHistory({ type: 'CHEM_STROKE', before })
+          chemStrokeSnapshot.current = null
+        }
       }
       if (b.mode === 'chemical' && strokeBuffer.current.length >= 3) {
         const pts = strokeBuffer.current

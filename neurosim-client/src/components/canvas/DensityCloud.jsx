@@ -77,18 +77,27 @@ const EDGE_FRAG = /* glsl */`
 
 // ── Material factories ──────────────────────────────────────────────────────
 function makeFillMat(density, color) {
-  return new THREE.ShaderMaterial({
+  const isErase = density < 0
+  const mat = new THREE.ShaderMaterial({
     vertexShader: FILL_VERT, fragmentShader: FILL_FRAG,
     uniforms: {
-      uDensity:      { value: density },
+      uDensity:      { value: Math.abs(density) },
       uOpacityScale: { value: 0.85 },
       uColor:        { value: new THREE.Color(...color) },
     },
     transparent: true, depthWrite: false, side: THREE.FrontSide,
     blending: THREE.CustomBlending,
-    blendEquation: THREE.MaxEquation,
+    blendEquation: isErase ? THREE.ReverseSubtractEquation : THREE.MaxEquation,
     blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
   })
+  // Stencil: positive fills mark pixels; negative fills only subtract where marked.
+  // This prevents erase strokes from darkening the background.
+  mat.stencilWrite     = true
+  mat.stencilRef       = 1
+  mat.stencilFunc      = isErase ? THREE.EqualStencilFunc : THREE.AlwaysStencilFunc
+  mat.stencilZPass     = isErase ? THREE.KeepStencilOp    : THREE.ReplaceStencilOp
+  mat.stencilWriteMask = isErase ? 0x00 : 0xff
+  return mat
 }
 
 function makeEdgeMat(color) {
@@ -102,8 +111,10 @@ function makeEdgeMat(color) {
 // ── Per-stroke mesh ─────────────────────────────────────────────────────────
 function StrokeMesh({ stroke, diffusion }) {
   const { points, radius, density } = stroke
+  const isErase = density < 0
   const fillR = radius
   const edgeR = radius * (1 + diffusion)
+  const order = isErase ? 10 : 0
 
   const fillMat = useMemo(() => makeFillMat(density, DENSITY_COLOR), [density])
   const edgeMat = useMemo(() => makeEdgeMat(CONTOUR_COLOR), [])
@@ -112,7 +123,7 @@ function StrokeMesh({ stroke, diffusion }) {
     if (points.length < 2) {
       return {
         tubeGeo: new THREE.SphereGeometry(fillR, 32, 24),
-        edgeTubeGeo: new THREE.SphereGeometry(edgeR, 48, 36),
+        edgeTubeGeo: isErase ? null : new THREE.SphereGeometry(edgeR, 48, 36),
         capGeos: null,
       }
     }
@@ -121,23 +132,24 @@ function StrokeMesh({ stroke, diffusion }) {
     const segs = Math.max(8, points.length * 4)
     return {
       tubeGeo: new THREE.TubeGeometry(curve, segs, fillR, 16, false),
-      edgeTubeGeo: new THREE.TubeGeometry(curve, segs, edgeR, 24, false),
+      edgeTubeGeo: isErase ? null : new THREE.TubeGeometry(curve, segs, edgeR, 24, false),
       capGeos: {
         fillStart: new THREE.SphereGeometry(fillR, 24, 16),
         fillEnd:   new THREE.SphereGeometry(fillR, 24, 16),
-        edgeStart: new THREE.SphereGeometry(edgeR, 32, 24),
-        edgeEnd:   new THREE.SphereGeometry(edgeR, 32, 24),
+        edgeStart: isErase ? null : new THREE.SphereGeometry(edgeR, 32, 24),
+        edgeEnd:   isErase ? null : new THREE.SphereGeometry(edgeR, 32, 24),
       },
     }
-  }, [points, fillR, edgeR])
+  }, [points, fillR, edgeR, isErase])
 
   useEffect(() => {
     return () => {
       tubeGeo.dispose()
-      edgeTubeGeo.dispose()
+      if (edgeTubeGeo) edgeTubeGeo.dispose()
       if (capGeos) {
         capGeos.fillStart.dispose(); capGeos.fillEnd.dispose()
-        capGeos.edgeStart.dispose(); capGeos.edgeEnd.dispose()
+        if (capGeos.edgeStart) capGeos.edgeStart.dispose()
+        if (capGeos.edgeEnd) capGeos.edgeEnd.dispose()
       }
     }
   }, [tubeGeo, edgeTubeGeo, capGeos])
@@ -147,8 +159,8 @@ function StrokeMesh({ stroke, diffusion }) {
   if (points.length < 2) {
     return (
       <group>
-        <mesh geometry={tubeGeo} material={fillMat} position={p0} frustumCulled={false} />
-        <mesh geometry={edgeTubeGeo} material={edgeMat} position={p0} frustumCulled={false} />
+        <mesh geometry={tubeGeo} material={fillMat} position={p0} renderOrder={order} frustumCulled={false} />
+        {edgeTubeGeo && <mesh geometry={edgeTubeGeo} material={edgeMat} position={p0} frustumCulled={false} />}
       </group>
     )
   }
@@ -157,13 +169,15 @@ function StrokeMesh({ stroke, diffusion }) {
   return (
     <group>
       {/* Fill */}
-      <mesh geometry={tubeGeo} material={fillMat} frustumCulled={false} />
-      <mesh geometry={capGeos.fillStart} material={fillMat} position={p0} frustumCulled={false} />
-      <mesh geometry={capGeos.fillEnd}   material={fillMat} position={pN} frustumCulled={false} />
-      {/* Contour */}
-      <mesh geometry={edgeTubeGeo} material={edgeMat} frustumCulled={false} />
-      <mesh geometry={capGeos.edgeStart} material={edgeMat} position={p0} frustumCulled={false} />
-      <mesh geometry={capGeos.edgeEnd}   material={edgeMat} position={pN} frustumCulled={false} />
+      <mesh geometry={tubeGeo} material={fillMat} renderOrder={order} frustumCulled={false} />
+      <mesh geometry={capGeos.fillStart} material={fillMat} position={p0} renderOrder={order} frustumCulled={false} />
+      <mesh geometry={capGeos.fillEnd}   material={fillMat} position={pN} renderOrder={order} frustumCulled={false} />
+      {/* Contour (positive strokes only) */}
+      {edgeTubeGeo && <>
+        <mesh geometry={edgeTubeGeo} material={edgeMat} frustumCulled={false} />
+        <mesh geometry={capGeos.edgeStart} material={edgeMat} position={p0} frustumCulled={false} />
+        <mesh geometry={capGeos.edgeEnd}   material={edgeMat} position={pN} frustumCulled={false} />
+      </>}
     </group>
   )
 }

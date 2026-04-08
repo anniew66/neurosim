@@ -116,6 +116,10 @@ function init_model(neurons::OrderedDict{String,NeuronRecord},
         :traj_written_lens    => Dict{Tuple{String,Int},Int}(),
         :stream_traj_lens     => Dict{Tuple{String,Int},Int}(),
         :health_checkpoints  => Dict{Int,Dict{String,Float64}}(),
+        :dead_neurons        => OrderedDict{String,NeuronRecord}(),
+        :dead_neuron_deaths  => Dict{String,Int}(),
+        :elec                => ElecArrays(),
+        :dyn_chem_buffer     => ChemSource[],
         :stream_channel       => nothing,   # set to a Channel when streaming
     )
 
@@ -189,13 +193,15 @@ function run_simulation(json_str::AbstractString)
         electrical_substeps!(model, t_struct)
 
         # Run structural step
-        structural_step!(model, t_struct)
+        n_active, n_somas = structural_step!(model, t_struct)
 
-        # Write VTK at structural step
-        write_vtk_timestep!(model, p.vtk_dir)
+        # Write VTK at structural step (throttled)
+        if t_struct % VTK_INTERVAL == 0 || t_struct == 1
+            write_vtk_timestep!(model, p.vtk_dir)
+        end
 
-        # Push live state to any connected browser viewer
-        if model.stream_channel !== nothing
+        # Push live state to any connected browser viewer (throttled)
+        if model.stream_channel !== nothing && t_struct % STREAM_INTERVAL == 0
             try
                 state = build_stream_state(model)
                 put!(model.stream_channel, state)
@@ -216,10 +222,8 @@ function run_simulation(json_str::AbstractString)
 
         # Progress print every 100 structural steps
         if t_struct % 100 == 0
-            n_syn  = length(model.synapses)
-            n_gc   = count(a isa GrowthCone && !a.retracted for a in allagents(model))
-            n_soma = count(a isa Soma && !a.dormant for a in allagents(model))
-            println("  t=$(t_struct)  somas=$(n_soma)  gc=$(n_gc)  synapses=$(n_syn)")
+            n_syn = length(model.synapses)
+            println("  t=$(t_struct)  somas=$(n_somas)  gc=$(n_active)  synapses=$(n_syn)")
         end
 
         # Stability check
@@ -232,7 +236,6 @@ function run_simulation(json_str::AbstractString)
         end
 
         # Stop if no active growth cones AND circuit is stable
-        n_active = count(a isa GrowthCone && !a.retracted for a in allagents(model))
         if n_active == 0 && stability_streak >= STAB_WINDOW
             println("  Circuit stable at t=$(t_struct). Stopping.")
             break
@@ -292,6 +295,21 @@ function build_stream_state(model)
         end
     end
 
+    # Append dead somas so the viewer can show them when scrubbing back in time
+    for (nid, nr) in model.dead_neurons
+        t_death = get(model.dead_neuron_deaths, nid, 0)
+        push!(somas, Dict(
+            "nid"     => nid[1:8],
+            "pos"     => [nr.soma_pos[1], nr.soma_pos[2], nr.soma_pos[3]],
+            "r"       => nr.soma_radius_base,
+            "h"       => 0.0,
+            "d"       => false,
+            "firing"  => 0.0,
+            "dead"    => true,
+            "death_t" => t_death,
+        ))
+    end
+
     # /state is intentionally minimal — just positions for live display.
     # Full trajectory history is served by /trajectories (loaded once on connect).
     # Keeping this small prevents ECANCELED errors from slow JSON serialisation.
@@ -333,7 +351,8 @@ function start_server(; host="0.0.0.0", port=8080)
                         JSON3.write(Dict("error"=>"no simulation")))
                 end
                 all_segs = []
-                for (uid, nr) in _current_model.neurons
+                all_neurons = merge(_current_model.neurons, _current_model.dead_neurons)
+                for (uid, nr) in all_neurons
                     for (ni, ns) in enumerate(nr.neurites)
                         traj = ns.trajectory
                         length(traj) < 2 && continue

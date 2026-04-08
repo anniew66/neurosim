@@ -3,7 +3,6 @@
 // Each stroke is a polyline { id, points, radius, density }.
 
 import { create } from 'zustand'
-import { distPointToPolyline } from '../lib/geometryUtils.js'
 
 const useChemPaintStore = create((set, get) => ({
   channels:     {},    // { [chemName]: { strokes: [], version: 0 } }
@@ -25,14 +24,23 @@ const useChemPaintStore = create((set, get) => ({
     }
   },
 
-  removeStrokesInRadius(name, cx, cy, cz, radius) {
-    const { channels } = get()
-    const ch = channels[name]
-    if (!ch) return
-    const keep = ch.strokes.filter(st => distPointToPolyline(cx, cy, cz, st.points) > radius)
-    if (keep.length !== ch.strokes.length) {
-      set({ channels: { ...channels, [name]: { strokes: keep, version: ch.version + 1 } } })
+  snapshotChannels() {
+    const { channels, channelNames } = get()
+    const snap = {}
+    for (const name of channelNames) {
+      const ch = channels[name]
+      snap[name] = { strokes: ch.strokes.map(st => ({ ...st, points: st.points.map(p => [...p]) })), version: ch.version }
     }
+    return { channels: snap, channelNames: [...channelNames] }
+  },
+
+  restoreChannels(snapshot) {
+    const channels = {}
+    for (const name of snapshot.channelNames) {
+      const ch = snapshot.channels[name]
+      channels[name] = { strokes: ch.strokes.map(st => ({ ...st, points: st.points.map(p => [...p]) })), version: (ch.version ?? 0) + 1 }
+    }
+    set({ channels, channelNames: [...snapshot.channelNames] })
   },
 
   setDiffusion(v) { set({ diffusion: v }) },

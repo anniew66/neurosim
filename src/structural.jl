@@ -18,20 +18,41 @@ function structural_step!(model, t_struct::Int)
     # 3. Activate dormant neurons whose start_time has arrived
     activate_dormant_neurons!(model, t_struct)
 
+    # ── Build typed agent caches (single allagents scan) ─────────────────────
+    active_cones = GrowthCone[]
+    active_somas = Soma[]
+    cones_by_nid = Dict{String, Vector{GrowthCone}}()
+    for a in allagents(model)
+        if a isa GrowthCone && !a.retracted
+            push!(active_cones, a)
+            push!(get!(cones_by_nid, a.neuron_id, GrowthCone[]), a)
+        elseif a isa Soma && !a.dormant
+            push!(active_somas, a)
+        end
+    end
+
+    # ── Build synapse-per-agent index (O(S) instead of O(G×S)) ───────────────
+    gc_syn_counts = Dict{Int,Int}()
+    for (_, syn) in model.synapses
+        syn.size > S_MIN_VIABLE || continue
+        gc_syn_counts[syn.pre_gc_id]  = get(gc_syn_counts, syn.pre_gc_id, 0) + 1
+        gc_syn_counts[syn.post_gc_id] = get(gc_syn_counts, syn.post_gc_id, 0) + 1
+    end
+
     # 4a. Sprout new growth cones from somas based on local gradients
-    check_sprouting!(model, t_struct)
+    check_sprouting!(model, t_struct, active_somas, cones_by_nid)
 
     # 4b. Move active growth cones (gradient + tissue density + pause)
-    move_growth_cones!(model)
+    move_growth_cones!(model, active_cones)
 
     # 5. Retraction: probabilistically retract overextended cones
-    check_retraction!(model)
+    check_retraction!(model, active_cones, gc_syn_counts)
 
     # 6. Branching: stochastic new branch sprouts
-    check_branching!(model)
+    check_branching!(model, active_cones)
 
     # 7. Synapse formation: provisional contact checks
-    check_synapse_formation!(model)
+    check_synapse_formation!(model, active_cones)
 
     # 8. Prune: remove synapses that have been weak too long
     prune_synapses!(model)
@@ -40,17 +61,22 @@ function structural_step!(model, t_struct::Int)
     update_health!(model)
 
     # 9b. Contact competition: retract redundant parallel dendrites
-    check_cone_competition!(model)
+    check_cone_competition!(model, cones_by_nid)
 
     # 10. Remove fully retracted growth cones
     remove_retracted!(model)
+
+    # Return counts so the main loop avoids extra allagents scans
+    n_active = count(a -> !a.retracted, active_cones)
+    return (n_active, length(active_somas))
 end
 
 # ── Chemical field rebuild ─────────────────────────────────────────────────────
 
 function rebuild_chemical_fields!(model)
     base_sources = model.base_chem_sources   # user-defined static sources
-    dyn_sources  = ChemSource[]
+    dyn_sources  = model.dyn_chem_buffer::Vector{ChemSource}
+    empty!(dyn_sources)
 
     for (nid, nr) in model.neurons
         state = get(model.neuron_elec, nid, nothing)
@@ -74,7 +100,11 @@ function rebuild_chemical_fields!(model)
         end
     end
 
-    model.chem_sources = vcat(base_sources, dyn_sources)
+    # Reuse chem_sources vector: overwrite with base + dynamic
+    sources = model.chem_sources::Vector{ChemSource}
+    empty!(sources)
+    append!(sources, base_sources)
+    append!(sources, dyn_sources)
 end
 
 # ── Activate dormant neurons ───────────────────────────────────────────────────
@@ -96,14 +126,13 @@ end
 
 # ── Growth cone movement ───────────────────────────────────────────────────────
 
-function move_growth_cones!(model)
+function move_growth_cones!(model, active_cones::Vector{GrowthCone})
     rng       = model.rng
     step_size = model.step_size
     alpha     = model.chemotaxis_strength
     beta      = model.random_walk_strength
 
-    for agent in allagents(model)
-        agent isa GrowthCone || continue
+    for agent in active_cones
         agent.retracted && continue
 
         soma_id = get(model.soma_agent_ids, agent.neuron_id, 0)
@@ -135,8 +164,16 @@ function move_growth_cones!(model)
         dir   = dir + β_eff * rand_unit_vec3(rng)
         dir   = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
 
+        # Blend with previous direction for persistence (reduces self-wrapping)
+        prev_dir = agent.vel
+        if norm(prev_dir) > 1e-12
+            dir = PERSISTENCE_LAMBDA * prev_dir + (1.0 - PERSISTENCE_LAMBDA) * dir
+            dir = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
+        end
+
         new_pos = clamp_to_box(pos + dir * step_size, model.lo, model.hi)
         move_agent!(agent, new_pos, model)
+        agent.vel = dir
 
         # Record shaft trajectory for primary neurites
         # Only append if position changed (avoid duplicate waypoints on pause)
@@ -153,18 +190,13 @@ end
 
 # ── Retraction ────────────────────────────────────────────────────────────────
 
-function check_retraction!(model)
+function check_retraction!(model, active_cones::Vector{GrowthCone},
+                           gc_syn_counts::Dict{Int,Int})
     rng = model.rng
-    for agent in allagents(model)
-        agent isa GrowthCone || continue
+    for agent in active_cones
         agent.retracted && continue
 
-        # Count stable synapses on this specific branch
-        n_branch_syn = count(
-            syn -> (syn.pre_gc_id == agent.id || syn.post_gc_id == agent.id) &&
-                   syn.size > S_MIN_VIABLE,
-            values(model.synapses)
-        )
+        n_branch_syn = get(gc_syn_counts, agent.id, 0)
 
         pr = p_retract(agent.branch_len, n_branch_syn)
         rand(rng) < pr || continue
@@ -246,22 +278,20 @@ function spread_directions(ax::SVector{3,Float64}, n::Int,
     dirs
 end
 
-function check_sprouting!(model, t_struct::Int)
+function check_sprouting!(model, t_struct::Int,
+                          active_somas::Vector{Soma},
+                          cones_by_nid::Dict{String, Vector{GrowthCone}})
     t_struct % SPROUT_INTERVAL == 0 || return
     rng = model.rng
 
-    for agent in allagents(model)
-        agent isa Soma || continue
-        agent.dormant  && continue
-
+    for agent in active_somas
         nid = agent.neuron_id
         nr  = model.neurons[nid]
         pos = agent.pos
 
-        # Gather all active cones: store (dir, branch_len, is_axon) tuples
-        # so we don't hold agent refs and can append placeholder entries safely
-        raw_cones = [a for a in allagents(model)
-                     if a isa GrowthCone && a.neuron_id == nid && !a.retracted]
+        # Gather all active cones from pre-built index
+        raw_cones = [a for a in get(cones_by_nid, nid, GrowthCone[])
+                     if !a.retracted]
         existing = [(normalize(a.pos - pos + SVector{3,Float64}(1e-9,0,0)),
                      a.branch_len, a.is_axon) for a in raw_cones]
         n_axons = count(x -> x[3],  existing)
@@ -362,13 +392,7 @@ end
 # For each pair of same-type cones of the same neuron, if one's territory cone
 # fully contains the other's direction, the shorter one is retracted.
 # This is O(n_cones²) per neuron but neurons have ≤ MAX_DENDRITES+1 cones.
-function check_cone_competition!(model)
-    cones_by_nid = Dict{String, Vector{Any}}()
-    for a in allagents(model)
-        a isa GrowthCone && !a.retracted || continue
-        push!(get!(cones_by_nid, a.neuron_id, []), a)
-    end
-
+function check_cone_competition!(model, cones_by_nid::Dict{String, Vector{GrowthCone}})
     to_retract = Set{Int}()
     for (nid, cones) in cones_by_nid
         length(cones) < 2 && continue
@@ -378,8 +402,10 @@ function check_cone_competition!(model)
         soma_r   = model.neurons[nid].soma_radius_base
 
         for i in 1:length(cones)
+            cones[i].retracted && continue
             cones[i].id in to_retract && continue
             for j in (i+1):length(cones)
+                cones[j].retracted && continue
                 cones[j].id in to_retract && continue
                 # Only compete same-type
                 cones[i].is_axon == cones[j].is_axon || continue
@@ -410,14 +436,11 @@ end
 
 # ── Branching ─────────────────────────────────────────────────────────────────
 
-function check_branching!(model)
+function check_branching!(model, active_cones::Vector{GrowthCone})
     rng = model.rng
     new_branches = NamedTuple[]
 
-    # Collect as plain NamedTuples — do NOT construct GrowthCone agents here
-    # (avoids mutating allagents during iteration, and avoids the removed nextid() API)
-    for agent in allagents(model)
-        agent isa GrowthCone        || continue
+    for agent in active_cones
         agent.retracted             && continue
         agent.branch_idx != 0       && continue   # only primary cones spawn branches
         agent.branch_len < 0.02     && continue   # too close to soma to branch
@@ -456,10 +479,9 @@ end
 
 # ── Synapse formation ─────────────────────────────────────────────────────────
 
-function check_synapse_formation!(model)
+function check_synapse_formation!(model, active_cones::Vector{GrowthCone})
     r_syn = model.synapse_radius
-    for agent in allagents(model)
-        agent isa GrowthCone     || continue
+    for agent in active_cones
         agent.is_axon            || continue
         agent.retracted          && continue
 
@@ -619,6 +641,17 @@ function update_health!(model)
 end
 
 function remove_neuron!(model, nid::String)
+    # Archive neuron record + last soma position before destruction
+    if haskey(model.neurons, nid)
+        nr = model.neurons[nid]
+        soma_aid = get(model.soma_agent_ids, nid, nothing)
+        if soma_aid !== nothing && hasid(model, soma_aid)
+            nr.soma_pos = model[soma_aid].pos
+        end
+        model.dead_neurons[nid] = nr
+        model.dead_neuron_deaths[nid] = model.t
+    end
+
     to_remove = [a.id for a in allagents(model)
                  if (a isa Soma && a.neuron_id == nid) ||
                     (a isa GrowthCone && a.neuron_id == nid)]

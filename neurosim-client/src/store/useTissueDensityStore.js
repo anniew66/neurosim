@@ -22,25 +22,6 @@ const useTissueDensityStore = create((set, get) => ({
     return id
   },
 
-  removeStrokesInRadius(cx, cy, cz, radius) {
-    set(s => {
-      const keep = s.strokes.filter(st => distPointToPolyline(cx, cy, cz, st.points) > radius)
-      return keep.length !== s.strokes.length ? { strokes: keep, version: s.version + 1 } : {}
-    })
-  },
-
-  removeStrokesBatch(entries) {
-    set(s => {
-      const keep = s.strokes.filter(st => {
-        for (const e of entries) {
-          if (distPointToPolyline(e.center[0], e.center[1], e.center[2], st.points) <= e.radius) return false
-        }
-        return true
-      })
-      return keep.length !== s.strokes.length ? { strokes: keep, version: s.version + 1 } : {}
-    })
-  },
-
   setDiffusion(v)    { set({ diffusion: v }) },
   setBaseDensity(v)  { set({ baseDensity: v }) },
   setBrushDensity(v) { set({ brushDensity: v }) },
@@ -68,7 +49,10 @@ const useTissueDensityStore = create((set, get) => ({
     const cellSize = span / res
     const data = new Float32Array(res * res * res)
 
-    for (const stroke of strokes) {
+    // Process positive strokes first, then negative — matches render order
+    // and ensures subtraction always operates on accumulated positive values.
+    const ordered = [...strokes].sort((a, b) => (a.density >= 0 ? 0 : 1) - (b.density >= 0 ? 0 : 1))
+    for (const stroke of ordered) {
       const effR   = stroke.radius * (1 + diffusion)
       const sigma  = stroke.radius * Math.max(0.01, diffusion)
       const sigma2 = 2 * sigma * sigma
@@ -97,10 +81,14 @@ const useTissueDensityStore = create((set, get) => ({
             const wz = origin[2] + k * cellSize
             const d = distPointToPolyline(wx, wy, wz, stroke.points)
             if (d > effR) continue
-            let val = stroke.density
+            let val = Math.abs(stroke.density)
             if (d > stroke.radius) val *= Math.exp(-((d - stroke.radius) ** 2) / sigma2)
             const idx = i + j * res + k * res * res
-            data[idx] = Math.min(1, data[idx] + val)
+            if (stroke.density >= 0) {
+              data[idx] = Math.min(1, data[idx] + val)
+            } else {
+              data[idx] = Math.max(0, data[idx] - val)
+            }
           }
     }
     return { nx: res, ny: res, nz: res, origin, cell_size: cellSize, data: Array.from(data), base_density: baseDensity }
