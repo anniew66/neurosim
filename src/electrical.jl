@@ -156,7 +156,7 @@ function apply_bcm_size_updates!(model)
         Δs_bcm = ETA_BCM * (c̄ - θ_ltd) * (θ_ltp - c̄) * c̄
 
         # Metabolic decay: cost scales with s² (larger synapses more expensive)
-        Δs_decay = -GAMMA_DECAY * syn.size^2
+        Δs_decay = -GAMMA_DECAY * syn.size
 
         syn.size = max(0.0, syn.size + Δs_bcm + Δs_decay)
     end

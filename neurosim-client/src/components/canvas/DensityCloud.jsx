@@ -1,183 +1,182 @@
 // components/canvas/DensityCloud.jsx
-//
-// Renders the 3D tissue density field as a continuous ray-marched volume —
-// like fog filling a box. Dense regions are more opaque amber.
-//
-// Implementation:
-//   • Unit box geometry ([-0.5..0.5]^3) scaled to VOL_SIZE mm.
-//   • BackSide rendering so fragments fire for the back faces; the ray
-//     origin is the camera position, direction toward each fragment.
-//   • worldToLocal on the camera position accounts for scale, giving
-//     coordinates already in [-0.5..0.5] — same space as the box and UVW.
-//   • Data3DTexture stores painted density (R channel, 0-255).
-//   • base density is a uniform added to every sample.
-//   • Linear filtering on the texture gives spatial continuity.
+// Renders tissue density strokes as TubeGeometry meshes with sphere caps.
+// Fill: MaxEquation blending, fresnel edge softening, opacity scales with density.
+// Contour: dashed silhouette at diffusion radius.
 
-import { useRef, useEffect, useMemo } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useMemo, useEffect } from 'react'
 import * as THREE from 'three'
 import useTissueDensityStore from '../../store/useTissueDensityStore.js'
 
-// Matches PaintSurface buildSurfaceMesh call: size:60, centred at origin
-// So the volume spans [-30..30] on all axes in world space.
-const VOL_HALF = 30    // half-extent mm
-const VOL_SIZE = VOL_HALF * 2   // 60 mm
+const DENSITY_COLOR = [0.95, 0.55, 0.1]
+const CONTOUR_COLOR = [1.0, 0.85, 0.6]
 
-const VERT = /* glsl */`
-  varying vec3 vPos;   // in [-0.5..0.5] local box space
+// ── Shared shaders ──────────────────────────────────────────────────────────
+const FILL_VERT = /* glsl */`
+  uniform float uDensity;
+  varying float vDensity;
+  varying vec3  vWorldPos;
+  varying vec3  vWorldNormal;
+
   void main() {
-    vPos = position;   // unit box: position IS in [-0.5..0.5]
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vDensity     = uDensity;
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPos    = worldPos.xyz;
+    vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
+    gl_Position  = projectionMatrix * viewMatrix * worldPos;
   }
 `
 
-const FRAG = /* glsl */`
+const FILL_FRAG = /* glsl */`
   precision highp float;
-  precision highp sampler3D;
-
-  uniform sampler3D uVolume;
-  uniform float     uBaseDensity;
-  uniform float     uOpacity;
-  uniform vec3      uCamLocal;  // camera in [-0.5..0.5] box space
-
-  varying vec3 vPos;
-
-  // Slab intersection for the [-0.5..0.5] unit box
-  vec2 boxHit(vec3 ro, vec3 rd) {
-    vec3 t0 = (-0.5 - ro) / rd;
-    vec3 t1 = ( 0.5 - ro) / rd;
-    vec3 tA = min(t0, t1);
-    vec3 tB = max(t0, t1);
-    float tNear = max(max(tA.x, tA.y), tA.z);
-    float tFar  = min(min(tB.x, tB.y), tB.z);
-    return vec2(tNear, tFar);
-  }
+  varying float vDensity;
+  varying vec3  vWorldPos;
+  varying vec3  vWorldNormal;
+  uniform float uOpacityScale;
+  uniform vec3  uColor;
 
   void main() {
-    vec3 ro = uCamLocal;
-    vec3 rd = normalize(vPos - uCamLocal);  // both in [-0.5..0.5] space ✓
-
-    vec2 tb = boxHit(ro, rd);
-    float tNear = max(tb.x, 0.0);
-    float tFar  = tb.y;
-    if (tFar <= tNear) discard;
-
-    const int STEPS = 80;
-    float dt = (tFar - tNear) / float(STEPS);
-    vec4 acc = vec4(0.0);
-
-    for (int i = 0; i < STEPS; i++) {
-      float t   = tNear + (float(i) + 0.5) * dt;
-      vec3  p   = ro + t * rd;          // [-0.5..0.5]
-      vec3  uvw = p + 0.5;              // [0..1] — texture coords
-
-      float painted = texture(uVolume, uvw).r;
-      float d       = clamp(uBaseDensity + painted, 0.0, 1.0);
-      if (d < 0.005) continue;
-
-      // Amber hue: warm orange-gold
-      vec3 col = vec3(0.9 + d * 0.1, 0.5 * d, 0.05 * d);
-      float a  = clamp(d * uOpacity * dt, 0.0, 0.08);
-
-      // Front-to-back alpha compositing
-      acc.rgb += (1.0 - acc.a) * col * a;
-      acc.a   += (1.0 - acc.a) * a;
-      if (acc.a > 0.95) break;
-    }
-
-    if (acc.a < 0.004) discard;
-    gl_FragColor = acc;
+    vec3  viewDir  = normalize(cameraPosition - vWorldPos);
+    float facing   = abs(dot(vWorldNormal, viewDir));
+    float edgeSoft = smoothstep(0.0, 0.3, facing);
+    float a = vDensity * uOpacityScale * edgeSoft;
+    gl_FragColor = vec4(uColor * a, a);
   }
 `
 
-export default function DensityCloud() {
-  const meshRef     = useRef()
-  const matRef      = useRef()
-  const texRef      = useRef(null)
+const EDGE_VERT = /* glsl */`
+  uniform float uDensity;
+  varying vec3  vWorldPos;
+  varying vec3  vWorldNormal;
 
-  const data        = useTissueDensityStore(s => s.data)
-  const resolution  = useTissueDensityStore(s => s.resolution)
-  const baseDensity = useTissueDensityStore(s => s.baseDensity)
+  void main() {
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPos    = worldPos.xyz;
+    vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
+    gl_Position  = projectionMatrix * viewMatrix * worldPos;
+  }
+`
 
-  // ── Shader material (created once) ─────────────────────────────────────────
-  const material = useMemo(() => {
-    const m = new THREE.ShaderMaterial({
-      vertexShader:   VERT,
-      fragmentShader: FRAG,
-      uniforms: {
-        uVolume:      { value: null },
-        uBaseDensity: { value: 0.0 },
-        uOpacity:     { value: 18.0 },
-        uCamLocal:    { value: new THREE.Vector3() },
-      },
-      transparent: true,
-      depthWrite:  false,
-      side:        THREE.BackSide,
-    })
-    matRef.current = m
-    return m
-  }, [])
+const EDGE_FRAG = /* glsl */`
+  precision highp float;
+  varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
+  uniform vec3 uColor;
 
-  // ── 3D texture: create / resize on resolution change ──────────────────────
-  useEffect(() => {
-    const res = resolution
-    const buf = new Uint8Array(res * res * res)
-    const tex = new THREE.Data3DTexture(buf, res, res, res)
-    tex.format          = THREE.RedFormat
-    tex.type            = THREE.UnsignedByteType
-    tex.minFilter       = THREE.LinearFilter
-    tex.magFilter       = THREE.LinearFilter
-    tex.wrapS           = THREE.ClampToEdgeWrapping
-    tex.wrapT           = THREE.ClampToEdgeWrapping
-    tex.wrapR           = THREE.ClampToEdgeWrapping
-    tex.unpackAlignment = 1
-    tex.needsUpdate     = true
-    texRef.current = tex
-    if (matRef.current) matRef.current.uniforms.uVolume.value = tex
-    return () => tex.dispose()
-  }, [resolution])
+  void main() {
+    vec3  viewDir = normalize(cameraPosition - vWorldPos);
+    float edge    = abs(dot(vWorldNormal, viewDir));
+    if (edge > 0.12) discard;
 
-  // ── Upload painted data ────────────────────────────────────────────────────
-  useEffect(() => {
-    const tex = texRef.current
-    if (!tex) return
-    const buf = new Uint8Array(data.length)
-    for (let i = 0; i < data.length; i++) {
-      buf[i] = Math.round(Math.min(1, Math.max(0, data[i])) * 255)
-    }
-    tex.image.data  = buf
-    tex.needsUpdate = true
-  }, [data, resolution])
+    float screenDash = mod(gl_FragCoord.x + gl_FragCoord.y, 12.0);
+    if (screenDash < 6.0) discard;
 
-  // ── Keep baseDensity uniform current ──────────────────────────────────────
-  useEffect(() => {
-    if (matRef.current) matRef.current.uniforms.uBaseDensity.value = baseDensity
-  }, [baseDensity])
+    float intensity = smoothstep(0.12, 0.0, edge) * 0.65;
+    gl_FragColor = vec4(uColor * intensity, intensity);
+  }
+`
 
-  // ── Update camera position every frame (useFrame = R3F per-frame hook) ────
-  // worldToLocal accounts for the mesh scale, converting world coords into
-  // the local [-0.5..0.5] unit-box space that the shader expects.
-  const _tmp = useMemo(() => new THREE.Vector3(), [])
-  useFrame(({ camera }) => {
-    if (!meshRef.current || !matRef.current) return
-    _tmp.copy(camera.position)
-    meshRef.current.worldToLocal(_tmp)
-    matRef.current.uniforms.uCamLocal.value.copy(_tmp)
+// ── Material factories ──────────────────────────────────────────────────────
+function makeFillMat(density, color) {
+  return new THREE.ShaderMaterial({
+    vertexShader: FILL_VERT, fragmentShader: FILL_FRAG,
+    uniforms: {
+      uDensity:      { value: density },
+      uOpacityScale: { value: 0.85 },
+      uColor:        { value: new THREE.Color(...color) },
+    },
+    transparent: true, depthWrite: false, side: THREE.FrontSide,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.MaxEquation,
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
   })
+}
+
+function makeEdgeMat(color) {
+  return new THREE.ShaderMaterial({
+    vertexShader: EDGE_VERT, fragmentShader: EDGE_FRAG,
+    uniforms: { uColor: { value: new THREE.Color(...color) } },
+    transparent: true, depthWrite: false, side: THREE.FrontSide,
+  })
+}
+
+// ── Per-stroke mesh ─────────────────────────────────────────────────────────
+function StrokeMesh({ stroke, diffusion }) {
+  const { points, radius, density } = stroke
+  const fillR = radius
+  const edgeR = radius * (1 + diffusion)
+
+  const fillMat = useMemo(() => makeFillMat(density, DENSITY_COLOR), [density])
+  const edgeMat = useMemo(() => makeEdgeMat(CONTOUR_COLOR), [])
+
+  const { tubeGeo, edgeTubeGeo, capGeos } = useMemo(() => {
+    if (points.length < 2) {
+      return {
+        tubeGeo: new THREE.SphereGeometry(fillR, 32, 24),
+        edgeTubeGeo: new THREE.SphereGeometry(edgeR, 48, 36),
+        capGeos: null,
+      }
+    }
+    const vecs = points.map(p => new THREE.Vector3(p[0], p[1], p[2]))
+    const curve = new THREE.CatmullRomCurve3(vecs, false, 'centripetal', 0.5)
+    const segs = Math.max(8, points.length * 4)
+    return {
+      tubeGeo: new THREE.TubeGeometry(curve, segs, fillR, 16, false),
+      edgeTubeGeo: new THREE.TubeGeometry(curve, segs, edgeR, 24, false),
+      capGeos: {
+        fillStart: new THREE.SphereGeometry(fillR, 24, 16),
+        fillEnd:   new THREE.SphereGeometry(fillR, 24, 16),
+        edgeStart: new THREE.SphereGeometry(edgeR, 32, 24),
+        edgeEnd:   new THREE.SphereGeometry(edgeR, 32, 24),
+      },
+    }
+  }, [points, fillR, edgeR])
+
+  useEffect(() => {
+    return () => {
+      tubeGeo.dispose()
+      edgeTubeGeo.dispose()
+      if (capGeos) {
+        capGeos.fillStart.dispose(); capGeos.fillEnd.dispose()
+        capGeos.edgeStart.dispose(); capGeos.edgeEnd.dispose()
+      }
+    }
+  }, [tubeGeo, edgeTubeGeo, capGeos])
+
+  const p0 = points[0]
+
+  if (points.length < 2) {
+    return (
+      <group>
+        <mesh geometry={tubeGeo} material={fillMat} position={p0} frustumCulled={false} />
+        <mesh geometry={edgeTubeGeo} material={edgeMat} position={p0} frustumCulled={false} />
+      </group>
+    )
+  }
+
+  const pN = points[points.length - 1]
+  return (
+    <group>
+      {/* Fill */}
+      <mesh geometry={tubeGeo} material={fillMat} frustumCulled={false} />
+      <mesh geometry={capGeos.fillStart} material={fillMat} position={p0} frustumCulled={false} />
+      <mesh geometry={capGeos.fillEnd}   material={fillMat} position={pN} frustumCulled={false} />
+      {/* Contour */}
+      <mesh geometry={edgeTubeGeo} material={edgeMat} frustumCulled={false} />
+      <mesh geometry={capGeos.edgeStart} material={edgeMat} position={p0} frustumCulled={false} />
+      <mesh geometry={capGeos.edgeEnd}   material={edgeMat} position={pN} frustumCulled={false} />
+    </group>
+  )
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+export default function DensityCloud() {
+  const version   = useTissueDensityStore(s => s.version)
+  const strokes   = useTissueDensityStore(s => s.strokes)
+  const diffusion = useTissueDensityStore(s => s.diffusion)
 
   return (
-    <mesh
-      ref={meshRef}
-      material={material}
-      position={[0, 0, 0]}
-      scale={[VOL_SIZE, VOL_SIZE, VOL_SIZE]}
-    >
-      {/*
-        Unit box [-0.5..0.5]^3 scaled to VOL_SIZE.
-        Spans [-30..30] in world space on all axes — centred at origin.
-        Matches PaintSurface which also spans [-30..30] in XZ.
-      */}
-      <boxGeometry args={[1, 1, 1]} />
-    </mesh>
+    <group>
+      {strokes.map(s => <StrokeMesh key={s.id} stroke={s} diffusion={diffusion} />)}
+    </group>
   )
 }

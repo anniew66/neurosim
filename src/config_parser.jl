@@ -184,16 +184,47 @@ function parse_json_config(json_str::AbstractString)
     # ── Tissue density grid ───────────────────────────────────────────────────
     tissue_density = nothing
     if haskey(raw, :tissue_density) && raw[:tissue_density] !== nothing
-        td = raw[:tissue_density]
-        nx = Int(td[:nx]); ny = Int(td[:ny]); nz = Int(td[:nz])
-        org = SVector{3,Float64}(Float64.(td[:origin])...)
-        cs  = Float64(td[:cell_size])
+        td   = raw[:tissue_density]
+        nx   = Int(td[:nx]);  nz = Int(td[:nz])
+        # ny=1 means 2D grid — extrude to 3D by replicating the XZ slice in Y
+        ny   = 8   # vertical layers (thin — density uniform in Y)
+        org  = SVector{3,Float64}(Float64.(td[:origin])...)
+        cs   = Float64(td[:cell_size])
+        base = haskey(td, :base) ? Float64(td[:base]) : 0.0
         grid = TissueDensityGrid(nx, ny, nz, org, cs)
-        raw_data = td[:data]
-        for i in eachindex(raw_data)
-            grid.data[i] = Float32(raw_data[i])
+        flat = td[:data]      # 2D XZ data, length nx*nz
+        for iz in 1:nz, iy in 1:ny, ix in 1:nx
+            v = Float32(flat[(ix-1) + (iz-1)*nx + 1])   # XZ index
+            grid.data[ix, iy, iz] = clamp(v + Float32(base), 0f0, 1f0)
         end
         tissue_density = grid
+    end
+
+    # ── Chemical fields (2D painted grids) → distributed ChemSources ─────────
+    if haskey(raw, :chemical_fields) && raw[:chemical_fields] !== nothing
+        for cf in raw[:chemical_fields]
+            name   = String(cf[:name])
+            res    = Int(cf[:res])
+            span_f = Float64(cf[:span])
+            ox     = Float64(cf[:origin_x])
+            oz     = Float64(cf[:origin_z])
+            cs_f   = span_f / res
+            data_f = cf[:data]
+            # Sample the grid at coarse intervals to create ChemSources
+            # Use every 16th cell so we get ~16×16 = 256 sources max
+            step = max(1, div(res, 16))
+            for iz in 1:step:res, ix in 1:step:res
+                v = Float64(data_f[(ix-1) + (iz-1)*res + 1])
+                v < 0.02 && continue   # skip empty cells
+                wx = ox + (ix - 0.5) * cs_f
+                wz = oz + (iz - 0.5) * cs_f
+                src = ChemSource(name,
+                    SVector{3,Float64}(wx, 0.0, wz),
+                    cs_f * step * 2.0,   # sigma = one grid super-cell
+                    v)
+                push!(chem_sources, src)
+            end
+        end
     end
 
     # ── Simulation params ─────────────────────────────────────────────────────
