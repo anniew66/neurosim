@@ -121,6 +121,7 @@ function init_model(neurons::OrderedDict{String,NeuronRecord},
         :elec                => ElecArrays(),
         :dyn_chem_buffer     => ChemSource[],
         :stream_channel       => nothing,   # set to a Channel when streaming
+        :last_streamed_t      => 0,
     )
 
     model = StandardABM(Union{GrowthCone,Soma}, space;
@@ -272,6 +273,13 @@ end
 function build_stream_state(model)
     somas = []
     cones = []
+    # Build neuron → index mapping for selection dimming
+    all_nids = collect(keys(model.neurons))
+    append!(all_nids, keys(model.dead_neurons))
+    nid_to_idx = Dict{String,Int}()
+    for (i, uid) in enumerate(all_nids)
+        nid_to_idx[uid] = i - 1
+    end
     for a in allagents(model)
         if a isa Soma
             elec = get(model.neuron_elec, a.neuron_id, nothing)
@@ -279,6 +287,7 @@ function build_stream_state(model)
             push!(somas, Dict(
                 "id"     => a.id,
                 "nid"    => a.neuron_id[1:8],
+                "nidx"   => get(nid_to_idx, a.neuron_id, -1),
                 "pos"    => [a.pos[1], a.pos[2], a.pos[3]],
                 "r"      => a.soma_radius,
                 "h"      => a.health,
@@ -300,6 +309,7 @@ function build_stream_state(model)
         t_death = get(model.dead_neuron_deaths, nid, 0)
         push!(somas, Dict(
             "nid"     => nid[1:8],
+            "nidx"    => get(nid_to_idx, nid, -1),
             "pos"     => [nr.soma_pos[1], nr.soma_pos[2], nr.soma_pos[3]],
             "r"       => nr.soma_radius_base,
             "h"       => 0.0,
@@ -310,14 +320,31 @@ function build_stream_state(model)
         ))
     end
 
-    # /state is intentionally minimal — just positions for live display.
-    # Full trajectory history is served by /trajectories (loaded once on connect).
-    # Keeping this small prevents ECANCELED errors from slow JSON serialisation.
+    # Incremental segment streaming — only segments newer than last poll
+    new_segs = []
+    last_t = model.last_streamed_t
+    for (uid, nr) in model.neurons
+        nidx = Float64(get(nid_to_idx, uid, -1))
+        for ns in nr.neurites
+            traj = ns.trajectory
+            ax = ns.is_axon ? 1 : 0
+            for wi in 1:(length(traj)-1)
+                t_step, p1 = traj[wi]
+                t_step <= last_t && continue
+                _, p2 = traj[wi+1]
+                push!(new_segs, [p1[1],p1[2],p1[3], p2[1],p2[2],p2[3],
+                                 ax, nidx, Float64(t_step)])
+            end
+        end
+    end
+    model.last_streamed_t = model.t
+
     syn_count = length(model.synapses)
 
     Dict("t"      => model.t,
          "somas"  => somas,
          "cones"  => cones,
+         "segs"   => new_segs,
          "syns"   => syn_count,
          "extent" => model.hi[1])
 end
@@ -352,7 +379,13 @@ function start_server(; host="0.0.0.0", port=8080)
                 end
                 all_segs = []
                 all_neurons = merge(_current_model.neurons, _current_model.dead_neurons)
+                # Build neuron → index mapping for segment attribution
+                nid_to_idx = Dict{String,Int}()
+                for (i, uid) in enumerate(keys(all_neurons))
+                    nid_to_idx[uid] = i - 1   # 0-based for JS
+                end
                 for (uid, nr) in all_neurons
+                    nidx = Float64(nid_to_idx[uid])
                     for (ni, ns) in enumerate(nr.neurites)
                         traj = ns.trajectory
                         length(traj) < 2 && continue
@@ -362,10 +395,11 @@ function start_server(; host="0.0.0.0", port=8080)
                             _,      p2 = traj[wi+1]
                             push!(all_segs, [p1[1],p1[2],p1[3],
                                              p2[1],p2[2],p2[3],
-                                             ax, Float64(t_step)])
+                                             ax, nidx, Float64(t_step)])
                         end
                     end
                 end
+                nid_map = Dict(uid[1:8] => nid_to_idx[uid] for uid in keys(all_neurons))
                 # Build health checkpoints compact format: [[t, nid, health], ...]
                 hc = _current_model.health_checkpoints
                 chk_list = []
@@ -381,6 +415,7 @@ function start_server(; host="0.0.0.0", port=8080)
                         "max_t"    => _current_model.t,
                         "extent"   => _current_model.hi[1],
                         "checkpoints" => chk_list,
+                        "nid_map"  => nid_map,
                     )))
             end
 

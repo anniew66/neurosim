@@ -14,10 +14,10 @@ export const SURFACE_PRESETS = {
     description: 'Horizontal plane. Adjust Y offset to move it up or down.',
     icon:        '▬',
     params: {
-      offsetY: { label: 'Y Offset', min: -20, max: 20, step: 0.5, default: 0 },
+      offsetY: { label: 'Y Offset', min: -20, max: 20, step: 0.5, default: 0.5 },
     },
     height(x, z, p) {
-      return p.offsetY ?? 0
+      return p.offsetY ?? 0.5
     },
   },
 
@@ -26,7 +26,7 @@ export const SURFACE_PRESETS = {
     description: 'Flat plane with adjustable pitch (X tilt) and roll (Z tilt).',
     icon:        '╱',
     params: {
-      offsetY: { label: 'Y Offset', min: -20, max: 20,  step: 0.5,  default: 0   },
+      offsetY: { label: 'Y Offset', min: -20, max: 20,  step: 0.5,  default: 0.5 },
       pitch:   { label: 'Pitch °',  min: -60, max: 60,  step: 1,    default: 0   },
       roll:    { label: 'Roll °',   min: -60, max: 60,  step: 1,    default: 0   },
     },
@@ -42,7 +42,7 @@ export const SURFACE_PRESETS = {
     description: 'Concave or convex spherical bowl. Radius controls curvature.',
     icon:        '◡',
     params: {
-      offsetY:  { label: 'Y Offset',  min: -20, max: 20,  step: 0.5,  default: 0  },
+      offsetY:  { label: 'Y Offset',  min: -20, max: 20,  step: 0.5,  default: 0.5 },
       radius:   { label: 'Radius',    min: 2,   max: 60,  step: 0.5,  default: 20 },
       concave:  { label: 'Concave',   type: 'bool',                   default: true },
     },
@@ -61,7 +61,7 @@ export const SURFACE_PRESETS = {
     description: 'Curved along one axis. Axis selects direction of curvature.',
     icon:        '⌒',
     params: {
-      offsetY:  { label: 'Y Offset',  min: -20, max: 20,  step: 0.5,  default: 0  },
+      offsetY:  { label: 'Y Offset',  min: -20, max: 20,  step: 0.5,  default: 0.5 },
       radius:   { label: 'Radius',    min: 2,   max: 60,  step: 0.5,  default: 20 },
       concave:  { label: 'Concave',   type: 'bool',                   default: true },
       axisZ:    { label: 'Axis: Z',   type: 'bool',                   default: false },
@@ -81,7 +81,7 @@ export const SURFACE_PRESETS = {
     description: 'Hyperbolic paraboloid — curves up in one direction, down in the other.',
     icon:        '⋈',
     params: {
-      offsetY:    { label: 'Y Offset',   min: -20, max: 20,  step: 0.5,   default: 0    },
+      offsetY:    { label: 'Y Offset',   min: -20, max: 20,  step: 0.5,   default: 0.5  },
       curvature:  { label: 'Curvature',  min: 0,   max: 0.5, step: 0.005, default: 0.05 },
     },
     height(x, z, p) {
@@ -95,7 +95,7 @@ export const SURFACE_PRESETS = {
     description: 'Sinusoidal surface. Adjust amplitude, frequency, and phase independently.',
     icon:        '∿',
     params: {
-      offsetY:    { label: 'Y Offset',   min: -20, max: 20,   step: 0.5,   default: 0   },
+      offsetY:    { label: 'Y Offset',   min: -20, max: 20,   step: 0.5,   default: 0.5 },
       amplitude:  { label: 'Amplitude',  min: 0,   max: 10,   step: 0.1,   default: 2   },
       freqX:      { label: 'Freq X',     min: 0,   max: 1,    step: 0.01,  default: 0.2 },
       freqZ:      { label: 'Freq Z',     min: 0,   max: 1,    step: 0.01,  default: 0.2 },
