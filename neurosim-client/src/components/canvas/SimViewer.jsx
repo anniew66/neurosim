@@ -13,6 +13,10 @@ const POLL_MS  = 800
 // Drain at most this many raw segs per frame to avoid GPU stalls
 const DRAIN_PER_FRAME = 20000
 
+// Base colors for axons and dendrites
+const AXON_R = 0.20, AXON_G = 0.52, AXON_B = 0.95
+const DEND_R = 0.90, DEND_G = 0.22, DEND_B = 0.22
+
 // ── Shaders ───────────────────────────────────────────────────────────────────
 const VERT = /* glsl */`
   attribute vec3 color;
@@ -58,7 +62,7 @@ function upperBound(arr, val, count) {
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
 function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
-                    onSelectSoma }) {
+                    onSelectSoma, selectedRef, dimFactorRef }) {
   const { scene, camera, gl } = useThree()
 
   const somaRef   = useRef(null)
@@ -72,14 +76,22 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
   const axonPos   = useRef(new Float32Array(MAX_SEGS * 6))
   const axonCol   = useRef(new Float32Array(MAX_SEGS * 6))
   const axonTimes = useRef(new Float32Array(MAX_SEGS))
+  const axonNids  = useRef(new Float32Array(MAX_SEGS))
   const axonCount = useRef(0)
   const dendPos   = useRef(new Float32Array(MAX_SEGS * 6))
   const dendCol   = useRef(new Float32Array(MAX_SEGS * 6))
   const dendTimes = useRef(new Float32Array(MAX_SEGS))
+  const dendNids  = useRef(new Float32Array(MAX_SEGS))
   const dendCount = useRef(0)
 
   const camFitted = useRef(false)
   const lastFit   = useRef(0)
+
+  // Dimming state tracking
+  const prevSelNidx   = useRef(null)
+  const prevDimFactor = useRef(null)
+  const prevAxonN     = useRef(0)
+  const prevDendN     = useRef(0)
 
   useEffect(() => {
     // Somas
@@ -93,8 +105,6 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
     // Line shader helper
     const makeLinesGeo = (posArr, colArr) => {
       const geo = new THREE.BufferGeometry()
-      // BufferAttribute takes the typed array by reference — writes to the array
-      // are visible immediately without needing to reassign .array
       const pA = new THREE.BufferAttribute(posArr, 3)
       const cA = new THREE.BufferAttribute(colArr, 3)
       pA.setUsage(THREE.DynamicDrawUsage)
@@ -145,12 +155,31 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
     return () => el.removeEventListener('click', handleClick)
   }, [gl, handleClick])
 
+  // ── Recolor segments for selection dimming ──────────────────────────────────
+  const recolorSegments = (selNidx, dim) => {
+    const recolor = (colArr, nidsArr, count, br, bg, bb) => {
+      for (let i = 0; i < count; i++) {
+        const isDimmed = selNidx !== null && nidsArr[i] !== selNidx
+        const f = isDimmed ? dim : 1.0
+        const base = i * 6
+        colArr[base]   = br*f; colArr[base+1] = bg*f; colArr[base+2] = bb*f
+        colArr[base+3] = br*f; colArr[base+4] = bg*f; colArr[base+5] = bb*f
+      }
+    }
+    recolor(axonCol.current, axonNids.current, axonCount.current, AXON_R, AXON_G, AXON_B)
+    recolor(dendCol.current, dendNids.current, dendCount.current, DEND_R, DEND_G, DEND_B)
+    if (axonRef.current) axonRef.current.geometry.attributes.color.needsUpdate = true
+    if (dendRef.current) dendRef.current.geometry.attributes.color.needsUpdate = true
+  }
+
   useFrame(() => {
     const shared = sharedRef.current
     if (!shared || !somaRef.current) return
 
     const ext      = shared.extent || 1.0
     const displayT = displayTRef.current
+    const selNidx  = selectedRef.current?.nidx ?? null
+    const dim      = dimFactorRef.current
 
     // ── Somas ────────────────────────────────────────────────────────────────
     const sm    = somaRef.current
@@ -166,7 +195,12 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
       somaDummy.scale.setScalar(Math.max(ext * 0.003, s.r * somaScaleRef.current))
       somaDummy.updateMatrix()
       sm.setMatrixAt(rendered, somaDummy.matrix)
-      sm.setColorAt(rendered, somaColor(s.h ?? 1, s.firing ?? 0))
+
+      const c = somaColor(s.h ?? 1, s.firing ?? 0)
+      if (selNidx !== null && s.nidx !== selNidx) {
+        c.multiplyScalar(dim)
+      }
+      sm.setColorAt(rendered, c)
       rendered++
     }
     sm.count = rendered
@@ -174,11 +208,11 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
     if (sm.instanceColor) sm.instanceColor.needsUpdate = true
 
     // ── Drain loadedSegs (history) — batch over multiple frames ──────────────
-    const loadQueue = shared.loadQueue  // Array of raw seg arrays, chunked
+    const loadQueue = shared.loadQueue
     if (loadQueue && loadQueue.length > 0) {
       const chunk = loadQueue.shift()
       if (chunk) {
-        const drainChunk = (posArr, colArr, timesArr, countRef, isAxon, r, g, b) => {
+        const drainChunk = (posArr, colArr, timesArr, nidsArr, countRef, isAxon, br, bg, bb) => {
           let ptr = countRef.current * 6
           let n   = countRef.current
           for (let i = 0; i < chunk.length; i++) {
@@ -187,32 +221,35 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
             if (n >= MAX_SEGS) break
             posArr[ptr]=s[0]; posArr[ptr+1]=s[1]; posArr[ptr+2]=s[2]
             posArr[ptr+3]=s[3]; posArr[ptr+4]=s[4]; posArr[ptr+5]=s[5]
-            colArr[ptr]=r; colArr[ptr+1]=g; colArr[ptr+2]=b
-            colArr[ptr+3]=r; colArr[ptr+4]=g; colArr[ptr+5]=b
-            timesArr[n] = s[7] ?? 0
+            // Apply dimming to new segments if a neuron is selected
+            const isDimmed = selNidx !== null && s[7] !== selNidx
+            const f = isDimmed ? dim : 1.0
+            colArr[ptr]=br*f; colArr[ptr+1]=bg*f; colArr[ptr+2]=bb*f
+            colArr[ptr+3]=br*f; colArr[ptr+4]=bg*f; colArr[ptr+5]=bb*f
+            nidsArr[n] = s[7] ?? -1
+            timesArr[n] = s[8] ?? 0
             ptr += 6; n++
           }
           countRef.current = n
         }
-        drainChunk(axonPos.current, axonCol.current, axonTimes.current, axonCount, true,  0.20, 0.52, 0.95)
-        drainChunk(dendPos.current, dendCol.current, dendTimes.current, dendCount, false, 0.90, 0.22, 0.22)
+        drainChunk(axonPos.current, axonCol.current, axonTimes.current, axonNids.current, axonCount, true,  AXON_R, AXON_G, AXON_B)
+        drainChunk(dendPos.current, dendCol.current, dendTimes.current, dendNids.current, dendCount, false, DEND_R, DEND_G, DEND_B)
 
-        // Mark only the newly written range dirty
-        const updateRange = (ref, countRef) => {
+        const updateRange = (ref) => {
           const attr = ref.current?.geometry?.attributes?.position
           if (!attr) return
           attr.needsUpdate = true
           ref.current.geometry.attributes.color.needsUpdate = true
         }
-        updateRange(axonRef, axonCount)
-        updateRange(dendRef, dendCount)
+        updateRange(axonRef)
+        updateRange(dendRef)
       }
     }
 
     // ── Drain live pendingSegs ────────────────────────────────────────────────
     const pending = shared.pendingSegs
     if (pending && pending.length > 0) {
-      const drainLive = (posArr, colArr, timesArr, countRef, isAxon, r, g, b) => {
+      const drainLive = (posArr, colArr, timesArr, nidsArr, countRef, isAxon, br, bg, bb) => {
         let ptr = countRef.current * 6
         let n   = countRef.current
         for (let i = 0; i < pending.length; i++) {
@@ -221,20 +258,35 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
           if (n >= MAX_SEGS) break
           posArr[ptr]=s[0]; posArr[ptr+1]=s[1]; posArr[ptr+2]=s[2]
           posArr[ptr+3]=s[3]; posArr[ptr+4]=s[4]; posArr[ptr+5]=s[5]
-          colArr[ptr]=r; colArr[ptr+1]=g; colArr[ptr+2]=b
-          colArr[ptr+3]=r; colArr[ptr+4]=g; colArr[ptr+5]=b
-          timesArr[n] = s[7] ?? 0
+          const isDimmed = selNidx !== null && s[7] !== selNidx
+          const f = isDimmed ? dim : 1.0
+          colArr[ptr]=br*f; colArr[ptr+1]=bg*f; colArr[ptr+2]=bb*f
+          colArr[ptr+3]=br*f; colArr[ptr+4]=bg*f; colArr[ptr+5]=bb*f
+          nidsArr[n] = s[7] ?? -1
+          timesArr[n] = s[8] ?? 0
           ptr += 6; n++
         }
         countRef.current = n
       }
-      drainLive(axonPos.current, axonCol.current, axonTimes.current, axonCount, true,  0.20, 0.52, 0.95)
-      drainLive(dendPos.current, dendCol.current, dendTimes.current, dendCount, false, 0.90, 0.22, 0.22)
+      drainLive(axonPos.current, axonCol.current, axonTimes.current, axonNids.current, axonCount, true,  AXON_R, AXON_G, AXON_B)
+      drainLive(dendPos.current, dendCol.current, dendTimes.current, dendNids.current, dendCount, false, DEND_R, DEND_G, DEND_B)
       shared.pendingSegs = []
       axonRef.current.geometry.attributes.position.needsUpdate = true
       axonRef.current.geometry.attributes.color.needsUpdate    = true
       dendRef.current.geometry.attributes.position.needsUpdate = true
       dendRef.current.geometry.attributes.color.needsUpdate    = true
+    }
+
+    // ── Recolor on selection / dim factor change ─────────────────────────────
+    const an = axonCount.current, dn = dendCount.current
+    if (selNidx !== prevSelNidx.current ||
+        dim !== prevDimFactor.current ||
+        (selNidx !== null && (an !== prevAxonN.current || dn !== prevDendN.current))) {
+      recolorSegments(selNidx, dim)
+      prevSelNidx.current   = selNidx
+      prevDimFactor.current = dim
+      prevAxonN.current     = an
+      prevDendN.current     = dn
     }
 
     // ── setDrawRange based on displayT ────────────────────────────────────────
@@ -321,10 +373,13 @@ export default function SimViewer({ serverUrl = '' }) {
   const [showDends,  setShowDends]  = useState(true)
   const [loadPct,    setLoadPct]    = useState(null)
   const [selected,   setSelected]   = useState(null)
+  const [dimFactor,  setDimFactor]  = useState(0.15)
 
   const sharedRef    = useRef({ somas:[], extent:1.0, maxT:0, pendingSegs:[], loadQueue:null })
   const somaScaleRef = useRef(1.0)
   const displayTRef  = useRef(0)
+  const selectedRef  = useRef(null)
+  const dimFactorRef = useRef(0.15)
   const timerRef     = useRef(null)
   const playTimerRef = useRef(null)
   const liveTRef     = useRef(0)
@@ -333,6 +388,8 @@ export default function SimViewer({ serverUrl = '' }) {
   useEffect(() => { somaScaleRef.current = somaScale  }, [somaScale])
   useEffect(() => { displayTRef.current  = displayT   }, [displayT])
   useEffect(() => { liveLockRef.current  = liveLocked }, [liveLocked])
+  useEffect(() => { selectedRef.current  = selected   }, [selected])
+  useEffect(() => { dimFactorRef.current = dimFactor  }, [dimFactor])
 
   // Load trajectory history — chunks into loadQueue for frame-by-frame drain
   const loadTrajectories = useCallback(async () => {
@@ -343,7 +400,7 @@ export default function SimViewer({ serverUrl = '' }) {
       if (!res.ok) { setLoadPct(null); return }
       const data = await res.json()
       const segs = data.segs ?? []
-      segs.sort((a,b) => (a[7]??0) - (b[7]??0))
+      segs.sort((a,b) => (a[8]??0) - (b[8]??0))   // sort by t_step (now element [8])
       setLoadPct(60)
 
       // Break into chunks so useFrame drains DRAIN_PER_FRAME per frame
@@ -352,7 +409,8 @@ export default function SimViewer({ serverUrl = '' }) {
         chunks.push(segs.slice(i, i + DRAIN_PER_FRAME))
 
       const shared = sharedRef.current
-      shared.loadQueue = chunks   // useFrame drains one chunk per frame
+      shared.loadQueue = chunks
+      shared.nidMap = data.nid_map ?? {}
 
       const newMax = data.max_t ?? 0
       shared.extent = data.extent ?? shared.extent
@@ -378,7 +436,6 @@ export default function SimViewer({ serverUrl = '' }) {
       liveTRef.current = t; s.maxT = Math.max(s.maxT, t)
       setMaxT(m => Math.max(m, t))
       if (liveLockRef.current) { setDisplayT(t); displayTRef.current = t }
-      // syns is now a count integer, not an array (segs removed from /state)
       setStats({ t, somas: s.somas.length, cones: (data.cones??[]).length,
                  syns: typeof data.syns === 'number' ? data.syns : (data.syns??[]).length })
     } catch {}
@@ -403,6 +460,7 @@ export default function SimViewer({ serverUrl = '' }) {
     s.somas = []; s.maxT = 0; s.extent = 1.0
     setStatus('live'); setStats(null); setMaxT(0); setDisplayT(0)
     setLiveLocked(true); setPlaying(false); liveLockRef.current = true
+    setSelected(null)
     poll()
     timerRef.current = setInterval(poll, POLL_MS)
     loadTrajectories()
@@ -473,7 +531,8 @@ export default function SimViewer({ serverUrl = '' }) {
                 onChange={e => {
                   const t = Number(e.target.value)
                   setDisplayT(t); displayTRef.current = t
-                  setLiveLocked(false); setPlaying(false)
+                  setLiveLocked(false); liveLockRef.current = false
+                  setPlaying(false)
                 }} />
               <span style={{fontSize:10,fontFamily:'var(--font-mono)',
                             color:'var(--text-dim)',whiteSpace:'nowrap'}}>
@@ -498,6 +557,15 @@ export default function SimViewer({ serverUrl = '' }) {
             <span style={{fontSize:10,fontFamily:'var(--font-mono)',
                           color:'var(--text-secondary)',minWidth:28}}>
               {somaScale.toFixed(1)}
+            </span>
+            <span style={{fontSize:10,color:'var(--text-dim)',whiteSpace:'nowrap',marginLeft:4}}>Dim</span>
+            <input type="range" className="ns-slider"
+              min={0} max={1} step={0.01} value={dimFactor}
+              style={{width:60}}
+              onChange={e => { const v=Number(e.target.value); setDimFactor(v); dimFactorRef.current=v }} />
+            <span style={{fontSize:10,fontFamily:'var(--font-mono)',
+                          color:'var(--text-secondary)',minWidth:28}}>
+              {dimFactor.toFixed(2)}
             </span>
             <div style={{flex:1}} />
             {[['axon','Axons',showAxons,setShowAxons,'#3a9ffa'],
@@ -534,6 +602,7 @@ export default function SimViewer({ serverUrl = '' }) {
               sharedRef={sharedRef} somaScaleRef={somaScaleRef}
               displayTRef={displayTRef} showAxons={showAxons}
               showDends={showDends} onSelectSoma={setSelected}
+              selectedRef={selectedRef} dimFactorRef={dimFactorRef}
             />
             <OrbitControls enableDamping dampingFactor={0.1}
               mouseButtons={{LEFT:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.PAN,RIGHT:THREE.MOUSE.PAN}} />
