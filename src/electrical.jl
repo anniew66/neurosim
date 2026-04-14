@@ -42,7 +42,8 @@ function build_elec_arrays!(ea::ElecArrays, model,
     ea.n_neurons = N
 
     resize!(ea.V, N); resize!(ea.refractory, N); resize!(ea.fired, N)
-    resize!(ea.fire_rate, N); resize!(ea.is_input, N); resize!(ea.is_active, N)
+    resize!(ea.fire_rate, N); resize!(ea.fire_count, N)
+    resize!(ea.is_input, N); resize!(ea.is_active, N)
     resize!(ea.seq_ptr, N); resize!(ea.input_mode, N); resize!(ea.input_rate, N)
     resize!(ea.input_seq, N); resize!(ea.idx_to_nid, N); resize!(ea.V_input, N)
 
@@ -59,6 +60,7 @@ function build_elec_arrays!(ea::ElecArrays, model,
         ea.refractory[i] = state.refractory
         ea.fired[i]      = state.fired
         ea.fire_rate[i]  = state.fire_rate
+        ea.fire_count[i] = 0   # reset for this substep block
         ea.seq_ptr[i]    = state.seq_ptr
 
         nr      = get(neurons, nid, nothing)
@@ -130,6 +132,7 @@ function sync_to_arrays!(ea::ElecArrays,
         ea.refractory[i] = state.refractory
         ea.fired[i]      = state.fired
         ea.fire_rate[i]  = state.fire_rate
+        ea.fire_count[i] = 0   # reset for new substep block
         ea.seq_ptr[i]    = state.seq_ptr
     end
     @inbounds for j in 1:ea.n_synapses
@@ -150,7 +153,8 @@ function sync_from_arrays!(ea::ElecArrays,
         state.V          = ea.V[i]
         state.refractory = ea.refractory[i]
         state.fired      = ea.fired[i]
-        state.fire_rate  = ea.fire_rate[i]
+        state.fire_count = ea.fire_count[i]
+        state.fire_rate  = ea.fire_count[i] / N_STRUCT  # immediate, accurate rate
         state.seq_ptr    = ea.seq_ptr[i]
         # Advance H ring buffer once with final fired state
         state.H[state.H_ptr] = ea.fired[i]
@@ -174,7 +178,7 @@ function electrical_step_vec!(ea::ElecArrays, rng, t_elec::Int)
     update_V_syns_vec!(ea)
     integrate_and_fire_vec!(ea)
     update_calcium_and_bcm_vec!(ea)
-    update_fire_rates_vec!(ea, t_elec)
+    # Fire rate is now computed from fire_count in sync_from_arrays!
 end
 
 # ── Input neurons ────────────────────────────────────────────────────────────
@@ -194,6 +198,7 @@ function fire_inputs_vec!(ea::ElecArrays, rng)
             false
         end
         ea.fired[i] = fired
+        if fired; ea.fire_count[i] += 1; end
     end
 end
 
@@ -238,6 +243,7 @@ function integrate_and_fire_vec!(ea::ElecArrays)
             ea.V[i]          = V_RESET
             ea.refractory[i] = REFRACTORY_STEPS
             ea.fired[i]      = true
+            ea.fire_count[i] += 1
         else
             ea.fired[i] = false
         end

@@ -284,6 +284,7 @@ function build_stream_state(model)
         if a isa Soma
             elec = get(model.neuron_elec, a.neuron_id, nothing)
             fr   = elec !== nothing ? elec.fire_rate : 0.0
+            fc   = elec !== nothing ? elec.fire_count : 0
             push!(somas, Dict(
                 "id"     => a.id,
                 "nid"    => a.neuron_id[1:8],
@@ -293,6 +294,7 @@ function build_stream_state(model)
                 "h"      => a.health,
                 "d"      => a.dormant,
                 "firing" => round(fr, digits=4),
+                "fc"     => fc,
             ))
         elseif a isa GrowthCone && !a.retracted
             push!(cones, Dict(
@@ -480,6 +482,65 @@ function start_server(; host="0.0.0.0", port=8080)
                      "Access-Control-Allow-Origin" => "*",
                      "Content-Length"             => string(sizeof(body))],
                     body)
+            end
+
+            # /synapses?nid=XXXXXXXX: per-neuron synapse details
+            if req.method == "GET" && startswith(req.target, "/synapses")
+                global _current_model
+                if _current_model === nothing
+                    return HTTP.Response(404,
+                        ["Content-Type"=>"application/json","Access-Control-Allow-Origin"=>"*"],
+                        JSON3.write(Dict("error"=>"no simulation")))
+                end
+                nid_short = ""
+                m = match(r"[?&]nid=([a-f0-9]+)", req.target)
+                if m !== nothing; nid_short = m[1]; end
+
+                # Find full nid from short prefix
+                full_nid = ""
+                all_n = merge(_current_model.neurons, _current_model.dead_neurons)
+                for nid in keys(all_n)
+                    if startswith(nid, nid_short)
+                        full_nid = nid; break
+                    end
+                end
+                if full_nid == ""
+                    return HTTP.Response(404,
+                        ["Content-Type"=>"application/json","Access-Control-Allow-Origin"=>"*"],
+                        JSON3.write(Dict("error"=>"neuron not found")))
+                end
+
+                outgoing = []
+                for sid in get(_current_model.pre_synapses, full_nid, Int[])
+                    syn = get(_current_model.synapses, sid, nothing)
+                    syn === nothing && continue
+                    push!(outgoing, Dict(
+                        "partner" => syn.post_neuron_id[1:8],
+                        "weight"  => round(syn.size * syn.attenuation, digits=5),
+                        "size"    => round(syn.size, digits=5),
+                        "dist"    => round(syn.distance, digits=4),
+                        "axosomatic" => syn.is_axosomatic,
+                    ))
+                end
+
+                incoming = []
+                for sid in get(_current_model.post_synapses, full_nid, Int[])
+                    syn = get(_current_model.synapses, sid, nothing)
+                    syn === nothing && continue
+                    push!(incoming, Dict(
+                        "partner" => syn.pre_neuron_id[1:8],
+                        "weight"  => round(syn.size * syn.attenuation, digits=5),
+                        "size"    => round(syn.size, digits=5),
+                        "dist"    => round(syn.distance, digits=4),
+                        "axosomatic" => syn.is_axosomatic,
+                    ))
+                end
+
+                return HTTP.Response(200,
+                    ["Content-Type"=>"application/json","Access-Control-Allow-Origin"=>"*"],
+                    JSON3.write(Dict("nid"=>nid_short,
+                                     "outgoing"=>outgoing,
+                                     "incoming"=>incoming)))
             end
 
             return HTTP.Response(404, ["Content-Type"=>"application/json"],

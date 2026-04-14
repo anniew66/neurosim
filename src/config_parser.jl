@@ -22,6 +22,22 @@ function clamp_to_box(x, lo, hi)
                        clamp(x[3],lo[3],hi[3]))
 end
 
+function reflect_at_bounds(pos, dir, lo, hi)
+    new_pos = MVector{3,Float64}(pos)
+    new_dir = MVector{3,Float64}(dir)
+    for i in 1:3
+        if new_pos[i] < lo[i]
+            new_pos[i] = lo[i] + (lo[i] - new_pos[i])
+            new_dir[i] = -new_dir[i]
+        elseif new_pos[i] > hi[i]
+            new_pos[i] = hi[i] - (new_pos[i] - hi[i])
+            new_dir[i] = -new_dir[i]
+        end
+        new_pos[i] = clamp(new_pos[i], lo[i], hi[i])  # safety
+    end
+    (SVector{3,Float64}(new_pos), SVector{3,Float64}(new_dir))
+end
+
 function net_chemical_gradient(x, attracts, repels, sources)
     # Returns a unit-scale gradient vector.
     # Each source contributes a direction weighted by its local concentration
@@ -184,47 +200,16 @@ function parse_json_config(json_str::AbstractString)
     # ── Tissue density grid ───────────────────────────────────────────────────
     tissue_density = nothing
     if haskey(raw, :tissue_density) && raw[:tissue_density] !== nothing
-        td   = raw[:tissue_density]
-        nx   = Int(td[:nx]);  nz = Int(td[:nz])
-        # ny=1 means 2D grid — extrude to 3D by replicating the XZ slice in Y
-        ny   = 8   # vertical layers (thin — density uniform in Y)
-        org  = SVector{3,Float64}(Float64.(td[:origin])...)
-        cs   = Float64(td[:cell_size])
-        base = haskey(td, :base) ? Float64(td[:base]) : 0.0
+        td = raw[:tissue_density]
+        nx = Int(td[:nx]); ny = Int(td[:ny]); nz = Int(td[:nz])
+        org = SVector{3,Float64}(Float64.(td[:origin])...)
+        cs  = Float64(td[:cell_size])
         grid = TissueDensityGrid(nx, ny, nz, org, cs)
-        flat = td[:data]      # 2D XZ data, length nx*nz
-        for iz in 1:nz, iy in 1:ny, ix in 1:nx
-            v = Float32(flat[(ix-1) + (iz-1)*nx + 1])   # XZ index
-            grid.data[ix, iy, iz] = clamp(v + Float32(base), 0f0, 1f0)
+        raw_data = td[:data]
+        for i in eachindex(raw_data)
+            grid.data[i] = Float32(raw_data[i])
         end
         tissue_density = grid
-    end
-
-    # ── Chemical fields (2D painted grids) → distributed ChemSources ─────────
-    if haskey(raw, :chemical_fields) && raw[:chemical_fields] !== nothing
-        for cf in raw[:chemical_fields]
-            name   = String(cf[:name])
-            res    = Int(cf[:res])
-            span_f = Float64(cf[:span])
-            ox     = Float64(cf[:origin_x])
-            oz     = Float64(cf[:origin_z])
-            cs_f   = span_f / res
-            data_f = cf[:data]
-            # Sample the grid at coarse intervals to create ChemSources
-            # Use every 16th cell so we get ~16×16 = 256 sources max
-            step = max(1, div(res, 16))
-            for iz in 1:step:res, ix in 1:step:res
-                v = Float64(data_f[(ix-1) + (iz-1)*res + 1])
-                v < 0.02 && continue   # skip empty cells
-                wx = ox + (ix - 0.5) * cs_f
-                wz = oz + (iz - 0.5) * cs_f
-                src = ChemSource(name,
-                    SVector{3,Float64}(wx, 0.0, wz),
-                    cs_f * step * 2.0,   # sigma = one grid super-cell
-                    v)
-                push!(chem_sources, src)
-            end
-        end
     end
 
     # ── Simulation params ─────────────────────────────────────────────────────

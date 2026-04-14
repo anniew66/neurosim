@@ -42,8 +42,8 @@ const S_MIN_VIABLE      = 0.005   # µm² — below this counts as weak
 const PRUNE_DELAY_DEFAULT = 5_000  # structural steps of weakness before removal
 
 # ── Branch retraction ─────────────────────────────────────────────────────────
-const RETRACT_ALPHA     = 6.0     # sigmoid sharpness
-const L_EQ_BASE         = 0.02    # mm — equilibrium length with 0 synapses
+const RETRACT_ALPHA     = 3.0     # sigmoid sharpness (softened for gradual transitions)
+const L_EQ_BASE         = 0.08    # mm — equilibrium length with 0 synapses (80 µm)
 const L_EQ_PER_SYN      = 0.12   # mm bonus per stable-ish synapse on branch
 const P_PAUSE_BASE      = 0.05   # base probability of growth cone pausing each structural step
 
@@ -82,22 +82,22 @@ end
 
 # ── Morphology structural defaults ───────────────────────────────────────────
 const MORPHOLOGY_DEFAULTS = Dict(
-    "purkinje"  => (branch_prob=0.04, L_target=3.0,
+    "purkinje"  => (branch_prob=0.08, L_target=3.0,
                     soma_radius=0.032, soma_radius_noise=0.006,
                     releases=["BDNF"], attracts=["NT3"], repels=["Sema3A"]),
-    "granule"   => (branch_prob=0.01, L_target=4.5,
+    "granule"   => (branch_prob=0.03, L_target=4.5,
                     soma_radius=0.0035, soma_radius_noise=0.0005,
                     releases=["NT3"], attracts=["BDNF"], repels=[]),
-    "basket"    => (branch_prob=0.02, L_target=0.7,
+    "basket"    => (branch_prob=0.05, L_target=0.7,
                     soma_radius=0.009, soma_radius_noise=0.001,
                     releases=["GABA"], attracts=["BDNF"], repels=["Sema3A"]),
-    "stellate"  => (branch_prob=0.02, L_target=0.35,
+    "stellate"  => (branch_prob=0.05, L_target=0.35,
                     soma_radius=0.006, soma_radius_noise=0.0015,
                     releases=["GABA"], attracts=["BDNF"], repels=[]),
-    "golgi"     => (branch_prob=0.02, L_target=0.8,
+    "golgi"     => (branch_prob=0.05, L_target=0.8,
                     soma_radius=0.015, soma_radius_noise=0.003,
                     releases=["GABA"], attracts=["NT3"], repels=[]),
-    "generic"   => (branch_prob=0.02, L_target=2.0,
+    "generic"   => (branch_prob=0.05, L_target=2.0,
                     soma_radius=0.010, soma_radius_noise=0.002,
                     releases=[], attracts=[], repels=[]),
 )

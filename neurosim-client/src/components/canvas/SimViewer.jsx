@@ -329,32 +329,151 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
   )
 }
 
+// ── Constants matching bio_constants.jl ───────────────────────────────────────
+const N_STRUCT = 100  // electrical steps per structural step
+
 // ── Info panel ────────────────────────────────────────────────────────────────
-function SomaInfoPanel({ soma, onClose }) {
+function SomaInfoPanel({ soma, onClose, serverUrl, onSelectSoma, sharedRef,
+                         fireHistoryRef, rateWindow, setRateWindow }) {
+  const [synData, setSynData]       = useState(null)
+  const [synLoading, setSynLoading] = useState(false)
+  const [showOut, setShowOut]       = useState(false)
+  const [showIn, setShowIn]         = useState(false)
+
+  // Fetch synapses when selected soma changes
+  useEffect(() => {
+    if (!soma?.nid) { setSynData(null); return }
+    setSynLoading(true)
+    fetch(`${serverUrl}/api/synapses?nid=${soma.nid}`,
+          { signal: AbortSignal.timeout(4000) })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { setSynData(data); setSynLoading(false) })
+      .catch(() => { setSynData(null); setSynLoading(false) })
+  }, [soma?.nid, serverUrl])
+
   if (!soma) return null
+
+  // Compute windowed average fire rate from history
+  const history = fireHistoryRef?.current?.[soma.nid] ?? []
+  const window = Math.min(rateWindow, history.length)
+  const recent = history.slice(-window)
+  const totalFires = recent.reduce((s, h) => s + (h.fc ?? 0), 0)
+  const avgRate = window > 0 ? totalFires / (window * N_STRUCT) : 0
+
+  const selectPartner = (nid) => {
+    const somas = sharedRef?.current?.somas ?? []
+    const match = somas.find(s => s.nid === nid)
+    if (match) onSelectSoma(match)
+  }
+
+  const rowStyle = {display:'flex',justifyContent:'space-between',marginBottom:3}
+  const dimStyle = {color:'var(--text-dim)'}
+  const valStyle = {color:'var(--text-secondary)'}
+
+  const outCount = synData?.outgoing?.length ?? 0
+  const inCount  = synData?.incoming?.length ?? 0
+
   return (
     <div style={{
       position:'absolute', top:10, right:10,
       background:'rgba(18,18,18,0.96)',
       border:`1px solid ${(soma.firing??0)>0.01?'var(--accent-amber)':'var(--border-mid)'}`,
-      borderRadius:'var(--radius-md)', padding:'10px 12px', minWidth:180,
+      borderRadius:'var(--radius-md)', padding:'10px 12px', minWidth:200, maxWidth:280,
+      maxHeight:'calc(100vh - 120px)', overflowY:'auto',
       fontSize:11, fontFamily:'var(--font-mono)', pointerEvents:'all',
     }}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <b style={{color:'var(--text-primary)'}}>{soma.nid ?? '?'}…</b>
         <button className="ns-btn icon-only" style={{fontSize:11}} onClick={onClose}>✕</button>
       </div>
-      {[['status',   soma.d ? 'dormant' : (soma.firing??0)>0.01 ? '⚡ firing' : 'active'],
+
+      {/* Basic info */}
+      {[['status',   soma.d ? 'dormant' : (soma.firing??0)>0.01 ? 'firing' : 'active'],
         ['health',   `${Math.round((soma.h??0)*100)}%`],
-        ['fire rate',`${((soma.firing??0)*1000).toFixed(1)} Hz`],
         ['radius',   `${((soma.r??0)*1000).toFixed(1)} µm`],
         ['pos',      soma.pos?.map(v=>v.toFixed(2)).join(', ') ?? '—'],
       ].map(([k,v]) => (
-        <div key={k} style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
-          <span style={{color:'var(--text-dim)'}}>{k}</span>
-          <span style={{color:'var(--text-secondary)'}}>{v}</span>
+        <div key={k} style={rowStyle}>
+          <span style={dimStyle}>{k}</span>
+          <span style={valStyle}>{v}</span>
         </div>
       ))}
+
+      {/* Fire rate section */}
+      <div style={{borderTop:'1px solid var(--border-dim)',marginTop:6,paddingTop:6}}>
+        <div style={rowStyle}>
+          <span style={dimStyle}>rate (inst)</span>
+          <span style={valStyle}>{((soma.firing??0)*1000).toFixed(1)} Hz</span>
+        </div>
+        <div style={rowStyle}>
+          <span style={dimStyle}>rate (avg)</span>
+          <span style={{color:'var(--accent-blue)'}}>{(avgRate*1000).toFixed(1)} Hz</span>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:4,marginBottom:4}}>
+          <span style={dimStyle}>window</span>
+          <select className="ns-select" style={{fontSize:10,padding:'1px 3px',width:70}}
+                  value={rateWindow}
+                  onChange={e => setRateWindow(Number(e.target.value))}>
+            {[1,5,10,25,50,100].map(n =>
+              <option key={n} value={n}>{n} steps</option>
+            )}
+          </select>
+        </div>
+      </div>
+
+      {/* Synapses section */}
+      {synLoading && <div style={{color:'var(--text-dim)',marginTop:6}}>loading synapses…</div>}
+      {synData && (
+        <div style={{borderTop:'1px solid var(--border-dim)',marginTop:6,paddingTop:6}}>
+          {/* Outgoing */}
+          <div style={{cursor:'pointer',marginBottom:4,color:'var(--text-primary)'}}
+               onClick={() => setShowOut(v => !v)}>
+            {showOut ? '▾' : '▸'} Outgoing ({outCount})
+          </div>
+          {showOut && synData.outgoing?.map((syn, i) => (
+            <div key={`o${i}`} style={{marginLeft:8,marginBottom:3}}>
+              <div style={{display:'flex',alignItems:'center',gap:4}}>
+                <span style={{color:'var(--accent-blue)',cursor:'pointer',textDecoration:'underline'}}
+                      onClick={() => selectPartner(syn.partner)}>
+                  {syn.partner}
+                </span>
+                <span style={dimStyle}>{syn.axosomatic ? 'axo' : 'den'}</span>
+                <span style={{flex:1}} />
+                <span style={valStyle}>{syn.weight.toFixed(4)}</span>
+              </div>
+              <div style={{height:3,background:'var(--border-dim)',borderRadius:2,marginTop:2}}>
+                <div style={{height:'100%',borderRadius:2,
+                             background:'var(--accent-blue)',
+                             width:`${Math.min(100, syn.weight * 1000)}%`}} />
+              </div>
+            </div>
+          ))}
+
+          {/* Incoming */}
+          <div style={{cursor:'pointer',marginBottom:4,marginTop:6,color:'var(--text-primary)'}}
+               onClick={() => setShowIn(v => !v)}>
+            {showIn ? '▾' : '▸'} Incoming ({inCount})
+          </div>
+          {showIn && synData.incoming?.map((syn, i) => (
+            <div key={`i${i}`} style={{marginLeft:8,marginBottom:3}}>
+              <div style={{display:'flex',alignItems:'center',gap:4}}>
+                <span style={{color:'#f04040',cursor:'pointer',textDecoration:'underline'}}
+                      onClick={() => selectPartner(syn.partner)}>
+                  {syn.partner}
+                </span>
+                <span style={dimStyle}>{syn.axosomatic ? 'axo' : 'den'}</span>
+                <span style={{flex:1}} />
+                <span style={valStyle}>{syn.weight.toFixed(4)}</span>
+              </div>
+              <div style={{height:3,background:'var(--border-dim)',borderRadius:2,marginTop:2}}>
+                <div style={{height:'100%',borderRadius:2,
+                             background:'#f04040',
+                             width:`${Math.min(100, syn.weight * 1000)}%`}} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -374,8 +493,10 @@ export default function SimViewer({ serverUrl = '' }) {
   const [loadPct,    setLoadPct]    = useState(null)
   const [selected,   setSelected]   = useState(null)
   const [dimFactor,  setDimFactor]  = useState(0.15)
+  const [rateWindow, setRateWindow] = useState(10)
 
   const sharedRef    = useRef({ somas:[], extent:1.0, maxT:0, pendingSegs:[], loadQueue:null })
+  const fireHistoryRef = useRef({})
   const somaScaleRef = useRef(1.0)
   const displayTRef  = useRef(0)
   const selectedRef  = useRef(null)
@@ -435,6 +556,19 @@ export default function SimViewer({ serverUrl = '' }) {
       const t = data.t ?? 0
       liveTRef.current = t; s.maxT = Math.max(s.maxT, t)
       setMaxT(m => Math.max(m, t))
+
+      // Accumulate fire count history for windowed average
+      const fh = fireHistoryRef.current
+      for (const soma of s.somas) {
+        if (!soma.nid) continue
+        if (!fh[soma.nid]) fh[soma.nid] = []
+        const hist = fh[soma.nid]
+        // Only push if we moved to a new structural step
+        if (hist.length === 0 || hist[hist.length - 1].t !== t) {
+          hist.push({ t, fc: soma.fc ?? 0 })
+          if (hist.length > 200) hist.shift()
+        }
+      }
       if (liveLockRef.current) { setDisplayT(t); displayTRef.current = t }
       setStats({ t, somas: s.somas.length, cones: (data.cones??[]).length,
                  syns: typeof data.syns === 'number' ? data.syns : (data.syns??[]).length })
@@ -458,6 +592,7 @@ export default function SimViewer({ serverUrl = '' }) {
     const s = sharedRef.current
     s.pendingSegs = []; s.loadQueue = null
     s.somas = []; s.maxT = 0; s.extent = 1.0
+    fireHistoryRef.current = {}
     setStatus('live'); setStats(null); setMaxT(0); setDisplayT(0)
     setLiveLocked(true); setPlaying(false); liveLockRef.current = true
     setSelected(null)
@@ -607,7 +742,9 @@ export default function SimViewer({ serverUrl = '' }) {
             <OrbitControls enableDamping dampingFactor={0.1}
               mouseButtons={{LEFT:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.PAN,RIGHT:THREE.MOUSE.PAN}} />
           </Canvas>
-          <SomaInfoPanel soma={selected} onClose={()=>setSelected(null)} />
+          <SomaInfoPanel soma={selected} onClose={()=>setSelected(null)}
+            serverUrl={serverUrl} onSelectSoma={setSelected} sharedRef={sharedRef}
+            fireHistoryRef={fireHistoryRef} rateWindow={rateWindow} setRateWindow={setRateWindow} />
           <div style={{position:'absolute',bottom:10,left:10,
                        background:'rgba(10,10,9,0.90)',border:'1px solid var(--border-mid)',
                        borderRadius:'var(--radius-sm)',padding:'5px 9px',

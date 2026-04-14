@@ -79,11 +79,12 @@ mutable struct NeuronElecState
     H_ptr      :: Int           # current write index
     fired      :: Bool          # fired in most recent electrical step
     fire_rate  :: Float64       # recent firing rate (used for chemical release)
+    fire_count :: Int           # fires accumulated this substep block
     seq_ptr    :: Int           # sequence playback pointer (sequence input only)
 end
 
 function NeuronElecState()
-    NeuronElecState(0.0, 0, fill(false, W_STDP_POST), 1, false, 0.0, 1)
+    NeuronElecState(0.0, 0, fill(false, W_STDP_POST), 1, false, 0.0, 0, 1)
 end
 
 # Helper: did neuron fire at relative offset `lag` steps ago?
@@ -133,7 +134,8 @@ mutable struct ElecArrays
     V               :: Vector{Float64}       # membrane potential
     refractory      :: Vector{Int}           # refractory countdown
     fired           :: Vector{Bool}          # fired this step
-    fire_rate       :: Vector{Float64}       # EMA firing rate
+    fire_rate       :: Vector{Float64}       # firing rate (fires/N_STRUCT)
+    fire_count      :: Vector{Int}           # fires this substep block
     is_input        :: Vector{Bool}          # true for input neurons
     is_active       :: Vector{Bool}          # false if dormant/dead/missing
     seq_ptr         :: Vector{Int}           # sequence playback pointer
@@ -172,7 +174,7 @@ end
 function ElecArrays()
     ElecArrays(
         0,                                   # n_neurons
-        Float64[], Int[], Bool[], Float64[], Bool[], Bool[], Int[],
+        Float64[], Int[], Bool[], Float64[], Int[], Bool[], Bool[], Int[],
         Symbol[], Float64[], Vector{Bool}[],
         Dict{String,Int}(), String[],
         0,                                   # n_synapses

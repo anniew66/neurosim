@@ -171,9 +171,10 @@ function move_growth_cones!(model, active_cones::Vector{GrowthCone})
             dir = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
         end
 
-        new_pos = clamp_to_box(pos + dir * step_size, model.lo, model.hi)
+        raw_pos = pos + dir * step_size
+        new_pos, new_dir = reflect_at_bounds(raw_pos, dir, model.lo, model.hi)
         move_agent!(agent, new_pos, model)
-        agent.vel = dir
+        agent.vel = new_dir
 
         # Record shaft trajectory for primary neurites
         # Only append if position changed (avoid duplicate waypoints on pause)
@@ -325,7 +326,7 @@ function check_sprouting!(model, t_struct::Int,
                     push!(nr.neurites, NeuriteSpec(az, el_deg, true,
                           Vector{Tuple{Int,SVector{3,Float64}}}()))
                     ni = length(nr.neurites)
-                    gc_pos = clamp_to_box(pos + dir_norm * model.step_size, model.lo, model.hi)
+                    gc_pos, _ = reflect_at_bounds(pos + dir_norm * model.step_size, dir_norm, model.lo, model.hi)
                     add_agent!(gc_pos, GrowthCone, model,
                                dir_norm, nid, ni, 0, true, 0, 0.0, false,
                                copy(nr.attracts), copy(nr.repels))
@@ -377,7 +378,7 @@ function check_sprouting!(model, t_struct::Int,
             push!(nr.neurites, NeuriteSpec(az, el, false,
                   Vector{Tuple{Int,SVector{3,Float64}}}()))
             ni = length(nr.neurites)
-            gc_pos = clamp_to_box(pos + dir_norm * model.step_size, model.lo, model.hi)
+            gc_pos, _ = reflect_at_bounds(pos + dir_norm * model.step_size, dir_norm, model.lo, model.hi)
             add_agent!(gc_pos, GrowthCone, model,
                        dir_norm, nid, ni, 0, false, 0, 0.0, false,
                        copy(nr.attracts), copy(nr.repels))
@@ -443,11 +444,10 @@ function check_branching!(model, active_cones::Vector{GrowthCone})
     for agent in active_cones
         agent.retracted             && continue
         agent.branch_idx != 0       && continue   # only primary cones spawn branches
-        agent.branch_len < 0.02     && continue   # too close to soma to branch
+        agent.branch_len < 0.01     && continue   # too close to soma to branch
 
         nr    = model.neurons[agent.neuron_id]
-        bprob = nr.branch_prob * (1.0 - agent.branch_len / max(nr.L_target * 2, 0.1))
-        bprob = max(0.0, bprob)
+        bprob = nr.branch_prob * max(0.3, 1.0 - agent.branch_len / max(nr.L_target * 3, 0.3))
         rand(rng) < bprob || continue
 
         traj = nr.neurites[agent.neurite_idx].trajectory
