@@ -171,6 +171,22 @@ function move_growth_cones!(model, active_cones::Vector{GrowthCone})
             dir = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
         end
 
+        # Boundary repulsion — soft wall force that curves cones away from edges
+        lo = model.lo; hi = model.hi
+        wall = MVector{3,Float64}(0, 0, 0)
+        for dim in 1:3
+            d_lo = pos[dim] - lo[dim]
+            d_hi = hi[dim] - pos[dim]
+            if d_lo < WALL_MARGIN
+                wall[dim] += WALL_STRENGTH * (1.0 - d_lo / WALL_MARGIN)^2
+            end
+            if d_hi < WALL_MARGIN
+                wall[dim] -= WALL_STRENGTH * (1.0 - d_hi / WALL_MARGIN)^2
+            end
+        end
+        dir = dir + SVector{3,Float64}(wall)
+        dir = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
+
         raw_pos = pos + dir * step_size
         new_pos, new_dir = reflect_at_bounds(raw_pos, dir, model.lo, model.hi)
         move_agent!(agent, new_pos, model)

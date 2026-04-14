@@ -154,7 +154,9 @@ function sync_from_arrays!(ea::ElecArrays,
         state.refractory = ea.refractory[i]
         state.fired      = ea.fired[i]
         state.fire_count = ea.fire_count[i]
-        state.fire_rate  = ea.fire_count[i] / N_STRUCT  # immediate, accurate rate
+        # EMA updated once per structural step from accurate count — converges in ~5 steps
+        instantaneous    = ea.fire_count[i] / N_STRUCT
+        state.fire_rate  = state.fire_rate * 0.8 + instantaneous * 0.2
         state.seq_ptr    = ea.seq_ptr[i]
         # Advance H ring buffer once with final fired state
         state.H[state.H_ptr] = ea.fired[i]
