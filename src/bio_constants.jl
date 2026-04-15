@@ -58,10 +58,6 @@ const K_NOISE           = 0.8     # gradient noise per unit density
 const K_PAUSE           = 0.15   # pause probability boost per unit density
 const PERSISTENCE_LAMBDA = 0.25  # direction persistence weight (0 = none, 1 = full inertia)
 
-# ── Boundary repulsion ───────────────────────────────────────────────────────
-const WALL_MARGIN       = 0.05   # mm — distance from wall where repulsion begins
-const WALL_STRENGTH     = 3.0    # repulsion force magnitude at wall (overrides chemotaxis)
-
 # ── Output throttling ────────────────────────────────────────────────────────
 const VTK_INTERVAL      = 10     # write VTK frame every N structural steps
 const STREAM_INTERVAL   = 5      # push live state to browser every N steps

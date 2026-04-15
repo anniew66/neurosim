@@ -171,20 +171,22 @@ function move_growth_cones!(model, active_cones::Vector{GrowthCone})
             dir = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
         end
 
-        # Boundary repulsion — soft wall force that curves cones away from edges
+        # Boundary slide — if near a wall and heading into it, zero out the
+        # inward component so the cone slides along the wall instead of piling
+        # up in an equilibrium zone. Margin scales with step_size so this
+        # behaves correctly regardless of the domain extent.
         lo = model.lo; hi = model.hi
-        wall = MVector{3,Float64}(0, 0, 0)
-        for dim in 1:3
-            d_lo = pos[dim] - lo[dim]
-            d_hi = hi[dim] - pos[dim]
-            if d_lo < WALL_MARGIN
-                wall[dim] += WALL_STRENGTH * (1.0 - d_lo / WALL_MARGIN)^2
+        margin = step_size * 2.0
+        clamped = MVector{3,Float64}(dir[1], dir[2], dir[3])
+        @inbounds for d in 1:3
+            if pos[d] - lo[d] < margin && clamped[d] < 0
+                clamped[d] = 0.0
             end
-            if d_hi < WALL_MARGIN
-                wall[dim] -= WALL_STRENGTH * (1.0 - d_hi / WALL_MARGIN)^2
+            if hi[d] - pos[d] < margin && clamped[d] > 0
+                clamped[d] = 0.0
             end
         end
-        dir = dir + SVector{3,Float64}(wall)
+        dir = SVector{3,Float64}(clamped)
         dir = norm(dir) > 1e-12 ? dir / norm(dir) : rand_unit_vec3(rng)
 
         raw_pos = pos + dir * step_size

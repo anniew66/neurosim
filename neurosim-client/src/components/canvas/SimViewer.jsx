@@ -353,6 +353,12 @@ function SomaInfoPanel({ soma, onClose, serverUrl, onSelectSoma, sharedRef,
 
   if (!soma) return null
 
+  // Look up LIVE soma data each render — the `soma` prop is a click-time
+  // snapshot that never updates. sharedRef.current.somas is refreshed every
+  // poll, and the parent re-renders us via setStats on each poll.
+  const liveSomas = sharedRef?.current?.somas ?? []
+  const live = liveSomas.find(s => s.nid === soma.nid) ?? soma
+
   // Compute windowed average fire rate from history
   const history = fireHistoryRef?.current?.[soma.nid] ?? []
   const window = Math.min(rateWindow, history.length)
@@ -377,7 +383,7 @@ function SomaInfoPanel({ soma, onClose, serverUrl, onSelectSoma, sharedRef,
     <div style={{
       position:'absolute', top:10, right:10,
       background:'rgba(18,18,18,0.96)',
-      border:`1px solid ${(soma.firing??0)>0.01?'var(--accent-amber)':'var(--border-mid)'}`,
+      border:`1px solid ${(live.firing??0)>0.01?'var(--accent-amber)':'var(--border-mid)'}`,
       borderRadius:'var(--radius-md)', padding:'10px 12px', minWidth:200, maxWidth:280,
       maxHeight:'calc(100vh - 120px)', overflowY:'auto',
       fontSize:11, fontFamily:'var(--font-mono)', pointerEvents:'all',
@@ -388,10 +394,10 @@ function SomaInfoPanel({ soma, onClose, serverUrl, onSelectSoma, sharedRef,
       </div>
 
       {/* Basic info */}
-      {[['status',   soma.d ? 'dormant' : (soma.firing??0)>0.01 ? 'firing' : 'active'],
-        ['health',   `${Math.round((soma.h??0)*100)}%`],
-        ['radius',   `${((soma.r??0)*1000).toFixed(1)} µm`],
-        ['pos',      soma.pos?.map(v=>v.toFixed(2)).join(', ') ?? '—'],
+      {[['status',   live.d ? 'dormant' : (live.firing??0)>0.01 ? 'firing' : 'active'],
+        ['health',   `${Math.round((live.h??0)*100)}%`],
+        ['radius',   `${((live.r??0)*1000).toFixed(1)} µm`],
+        ['pos',      live.pos?.map(v=>v.toFixed(2)).join(', ') ?? '—'],
       ].map(([k,v]) => (
         <div key={k} style={rowStyle}>
           <span style={dimStyle}>{k}</span>
@@ -403,7 +409,7 @@ function SomaInfoPanel({ soma, onClose, serverUrl, onSelectSoma, sharedRef,
       <div style={{borderTop:'1px solid var(--border-dim)',marginTop:6,paddingTop:6}}>
         <div style={rowStyle}>
           <span style={dimStyle}>rate (inst)</span>
-          <span style={valStyle}>{((soma.firing??0)*1000).toFixed(1)} Hz</span>
+          <span style={valStyle}>{((live.firing??0)*1000).toFixed(1)} Hz</span>
         </div>
         <div style={rowStyle}>
           <span style={dimStyle}>rate (avg)</span>
