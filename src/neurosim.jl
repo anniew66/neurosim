@@ -251,10 +251,13 @@ function run_simulation(json_str::AbstractString)
     write_pvd(model.pvd_buffer, pvd_path, p.vtk_dir)
     write_paraview_script(pvd_path, script_path)
 
-    syn_csv_path   = p.synapse_csv
-    pytorch_script = replace(syn_csv_path, ".csv" => "_export_weights.py")
+    syn_csv_path    = p.synapse_csv
+    neuron_csv_path = replace(syn_csv_path, r"synapses?\.csv$" => "neurons.csv")
+    neuron_csv_path == syn_csv_path && (neuron_csv_path = replace(syn_csv_path, ".csv" => "_neurons.csv"))
+    pytorch_script  = replace(syn_csv_path, ".csv" => "_export_weights.py")
     export_synapse_csv(model, syn_csv_path)
-    write_pytorch_script(syn_csv_path, pytorch_script)
+    export_neuron_csv(model, neuron_csv_path)
+    write_pytorch_script(syn_csv_path, neuron_csv_path, pytorch_script)
 
     return Dict(
         "status"          => "ok",
@@ -264,6 +267,7 @@ function run_simulation(json_str::AbstractString)
         "vtk_dir"         => abspath(p.vtk_dir),
         "pvd_path"        => abspath(pvd_path),
         "synapse_csv"     => abspath(syn_csv_path),
+        "neuron_csv"      => abspath(neuron_csv_path),
         "pytorch_script"  => abspath(pytorch_script),
     )
 end
