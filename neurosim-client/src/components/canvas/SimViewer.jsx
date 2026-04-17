@@ -207,7 +207,39 @@ function SimScene({ sharedRef, somaScaleRef, displayTRef, showAxons, showDends,
     sm.instanceMatrix.needsUpdate = true
     if (sm.instanceColor) sm.instanceColor.needsUpdate = true
 
+    // ── Atomic resync swap (history reload triggered by retraction) ──────────
+    // loadTrajectories puts a fresh full-snapshot here; we memcpy it into the
+    // existing GPU-bound Float32Arrays in a single frame so there's no blank
+    // intermediate frame.
+    const resync = shared.pendingResync
+    if (resync) {
+      axonPos.current.set(resync.axon.pos, 0)
+      axonCol.current.set(resync.axon.col, 0)
+      axonTimes.current.set(resync.axon.times, 0)
+      axonNids.current.set(resync.axon.nids, 0)
+      axonCount.current = resync.axon.count
+      dendPos.current.set(resync.dend.pos, 0)
+      dendCol.current.set(resync.dend.col, 0)
+      dendTimes.current.set(resync.dend.times, 0)
+      dendNids.current.set(resync.dend.nids, 0)
+      dendCount.current = resync.dend.count
+      shared.lastResyncT = resync.t
+      shared.pendingResync = null
+      if (axonRef.current) {
+        axonRef.current.geometry.attributes.position.needsUpdate = true
+        axonRef.current.geometry.attributes.color.needsUpdate    = true
+      }
+      if (dendRef.current) {
+        dendRef.current.geometry.attributes.position.needsUpdate = true
+        dendRef.current.geometry.attributes.color.needsUpdate    = true
+      }
+      // Force recolor on next selection-check pass
+      prevAxonN.current = -1
+      prevDendN.current = -1
+    }
+
     // ── Drain loadedSegs (history) — batch over multiple frames ──────────────
+    // (legacy path; the resync-swap above is the primary load mechanism now)
     const loadQueue = shared.loadQueue
     if (loadQueue && loadQueue.length > 0) {
       const chunk = loadQueue.shift()
@@ -501,8 +533,10 @@ export default function SimViewer({ serverUrl = '' }) {
   const [dimFactor,  setDimFactor]  = useState(0.15)
   const [rateWindow, setRateWindow] = useState(10)
 
-  const sharedRef    = useRef({ somas:[], extent:1.0, maxT:0, pendingSegs:[], loadQueue:null })
+  const sharedRef    = useRef({ somas:[], extent:1.0, maxT:0, pendingSegs:[],
+                                loadQueue:null, pendingResync:null, lastResyncT:0 })
   const fireHistoryRef = useRef({})
+  const lastRetractNRef = useRef(0)
   const somaScaleRef = useRef(1.0)
   const displayTRef  = useRef(0)
   const selectedRef  = useRef(null)
@@ -518,7 +552,10 @@ export default function SimViewer({ serverUrl = '' }) {
   useEffect(() => { selectedRef.current  = selected   }, [selected])
   useEffect(() => { dimFactorRef.current = dimFactor  }, [dimFactor])
 
-  // Load trajectory history — chunks into loadQueue for frame-by-frame drain
+  // Load trajectory history — builds a full Float32Array snapshot and stages
+  // it as `pendingResync`. The Scene's useFrame swaps it in atomically (single
+  // frame, no flicker). Used both for initial start AND for retraction-event
+  // resyncs (poll() schedules this when model.retract_n increases).
   const loadTrajectories = useCallback(async () => {
     setLoadPct(0)
     try {
@@ -527,23 +564,49 @@ export default function SimViewer({ serverUrl = '' }) {
       if (!res.ok) { setLoadPct(null); return }
       const data = await res.json()
       const segs = data.segs ?? []
-      segs.sort((a,b) => (a[8]??0) - (b[8]??0))   // sort by t_step (now element [8])
+      segs.sort((a,b) => (a[8]??0) - (b[8]??0))   // sort by t_step (element [8])
       setLoadPct(60)
 
-      // Break into chunks so useFrame drains DRAIN_PER_FRAME per frame
-      const chunks = []
-      for (let i = 0; i < segs.length; i += DRAIN_PER_FRAME)
-        chunks.push(segs.slice(i, i + DRAIN_PER_FRAME))
+      // Partition by axon/dend (s[6]==1 for axon)
+      const axonSegs = []
+      const dendSegs = []
+      for (const s of segs) (s[6] === 1 ? axonSegs : dendSegs).push(s)
+      if (axonSegs.length > MAX_SEGS) axonSegs.length = MAX_SEGS
+      if (dendSegs.length > MAX_SEGS) dendSegs.length = MAX_SEGS
+
+      const buildResync = (segArr, br, bg, bb) => {
+        const n = segArr.length
+        const pos   = new Float32Array(n * 6)
+        const col   = new Float32Array(n * 6)
+        const times = new Float32Array(n)
+        const nids  = new Float32Array(n)
+        for (let i = 0; i < n; i++) {
+          const s = segArr[i]
+          const p = i * 6
+          pos[p]=s[0]; pos[p+1]=s[1]; pos[p+2]=s[2]
+          pos[p+3]=s[3]; pos[p+4]=s[4]; pos[p+5]=s[5]
+          col[p]=br;    col[p+1]=bg;   col[p+2]=bb
+          col[p+3]=br;  col[p+4]=bg;   col[p+5]=bb
+          nids[i]  = s[7] ?? -1
+          times[i] = s[8] ?? 0
+        }
+        return { pos, col, times, nids, count: n }
+      }
 
       const shared = sharedRef.current
-      shared.loadQueue = chunks
+      shared.pendingResync = {
+        axon: buildResync(axonSegs, AXON_R, AXON_G, AXON_B),
+        dend: buildResync(dendSegs, DEND_R, DEND_G, DEND_B),
+        t:    data.max_t ?? 0,
+      }
       shared.nidMap = data.nid_map ?? {}
 
       const newMax = data.max_t ?? 0
       shared.extent = data.extent ?? shared.extent
-      shared.maxT   = newMax
+      shared.maxT   = Math.max(shared.maxT, newMax)
       liveTRef.current = newMax
-      setMaxT(newMax); setDisplayT(newMax); displayTRef.current = newMax
+      setMaxT(m => Math.max(m, newMax))
+      if (liveLockRef.current) { setDisplayT(newMax); displayTRef.current = newMax }
       setLoadPct(null)
     } catch(e) {
       console.warn('loadTrajectories:', e); setLoadPct(null)
@@ -558,7 +621,21 @@ export default function SimViewer({ serverUrl = '' }) {
       const s = sharedRef.current
       s.somas  = data.somas  ?? []
       s.extent = data.extent ?? s.extent
-      if (data.segs?.length > 0) s.pendingSegs.push(...data.segs)
+      // Filter out segs that predate the last full-resync to avoid duplicates
+      // (resync's snapshot already contains everything up through resync.t).
+      if (data.segs?.length > 0) {
+        const cutoff = s.lastResyncT ?? 0
+        for (const seg of data.segs) {
+          if ((seg[8] ?? 0) > cutoff) s.pendingSegs.push(seg)
+        }
+      }
+      // Retraction event → schedule a full trajectory resync. Cheap because
+      // it only fires when the backend actually popped a waypoint.
+      const newRetractN = data.retract_n ?? 0
+      if (newRetractN > lastRetractNRef.current) {
+        lastRetractNRef.current = newRetractN
+        loadTrajectories()
+      }
       const t = data.t ?? 0
       liveTRef.current = t; s.maxT = Math.max(s.maxT, t)
       setMaxT(m => Math.max(m, t))
@@ -579,7 +656,7 @@ export default function SimViewer({ serverUrl = '' }) {
       setStats({ t, somas: s.somas.length, cones: (data.cones??[]).length,
                  syns: typeof data.syns === 'number' ? data.syns : (data.syns??[]).length })
     } catch {}
-  }, [serverUrl])
+  }, [serverUrl, loadTrajectories])
 
   useEffect(() => {
     if (!playing) { clearInterval(playTimerRef.current); return }
@@ -597,8 +674,10 @@ export default function SimViewer({ serverUrl = '' }) {
   const start = useCallback(async () => {
     const s = sharedRef.current
     s.pendingSegs = []; s.loadQueue = null
+    s.pendingResync = null; s.lastResyncT = 0
     s.somas = []; s.maxT = 0; s.extent = 1.0
     fireHistoryRef.current = {}
+    lastRetractNRef.current = 0
     setStatus('live'); setStats(null); setMaxT(0); setDisplayT(0)
     setLiveLocked(true); setPlaying(false); liveLockRef.current = true
     setSelected(null)

@@ -28,6 +28,10 @@ InputSpec() = InputSpec(:rate, 0.0, Bool[], false)
     retracted    :: Bool       # cone has retracted fully → pending removal
     attract_chems:: Vector{String}
     repel_chems  :: Vector{String}
+    # Per-cone trajectory used for branched cones (branch_idx > 0). Primary
+    # cones (branch_idx == 0) still use NeuriteSpec.trajectory on the
+    # NeuronRecord, which is shared across the soma's primary shaft.
+    branch_trajectory :: Vector{Tuple{Int,SVector{3,Float64}}}
 end
 
 # Soma: cell body. Electrical state stored externally in model.neuron_elec.

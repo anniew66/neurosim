@@ -194,10 +194,17 @@ function move_growth_cones!(model, active_cones::Vector{GrowthCone})
         move_agent!(agent, new_pos, model)
         agent.vel = new_dir
 
-        # Record shaft trajectory for primary neurites
-        # Only append if position changed (avoid duplicate waypoints on pause)
+        # Record trajectory waypoint. Primary cones write to the shared
+        # NeuriteSpec.trajectory on the NeuronRecord; branched cones write to
+        # their own per-agent branch_trajectory so check_retraction! can pop.
+        # Only append if position changed (avoid duplicate waypoints on pause).
         if agent.branch_idx == 0
             traj = nr.neurites[agent.neurite_idx].trajectory
+            if isempty(traj) || norm(agent.pos - traj[end][2]) > model.step_size * 0.1
+                push!(traj, (model.t, agent.pos))
+            end
+        else
+            traj = agent.branch_trajectory
             if isempty(traj) || norm(agent.pos - traj[end][2]) > model.step_size * 0.1
                 push!(traj, (model.t, agent.pos))
             end
@@ -220,10 +227,13 @@ function check_retraction!(model, active_cones::Vector{GrowthCone},
         pr = p_retract(agent.branch_len, n_branch_syn)
         rand(rng) < pr || continue
 
-        # Retract one step along trajectory
+        # Retract one step along trajectory.  Primary cones share the
+        # NeuriteSpec.trajectory on the NeuronRecord; branched cones own
+        # their own branch_trajectory.
         nr   = model.neurons[agent.neuron_id]
-        traj = agent.branch_idx == 0 ? nr.neurites[agent.neurite_idx].trajectory :
-               Vector{Tuple{Int,SVector{3,Float64}}}()
+        traj = agent.branch_idx == 0 ?
+               nr.neurites[agent.neurite_idx].trajectory :
+               agent.branch_trajectory
 
         if !isempty(traj)
             pop!(traj)
@@ -231,6 +241,18 @@ function check_retraction!(model, active_cones::Vector{GrowthCone},
             if !isempty(traj)
                 _, prev_pos = traj[end]
                 move_agent!(agent, prev_pos, model)
+            end
+
+            # Bump the per-model retraction counter so the viewer knows to
+            # resync trajectories.
+            model.retraction_count += 1
+
+            # Reset the VTK delta cache for primary cones so the next frame
+            # re-emits the now-shorter trajectory instead of skipping it.
+            if agent.branch_idx == 0
+                key = (agent.neuron_id, agent.neurite_idx)
+                written = model.traj_written_lens
+                written[key] = min(get(written, key, 0), length(traj))
             end
         else
             agent.branch_len = max(0.0, agent.branch_len - model.step_size)
@@ -347,7 +369,8 @@ function check_sprouting!(model, t_struct::Int,
                     gc_pos, _ = reflect_at_bounds(pos + dir_norm * model.step_size, dir_norm, model.lo, model.hi)
                     add_agent!(gc_pos, GrowthCone, model,
                                dir_norm, nid, ni, 0, true, 0, 0.0, false,
-                               copy(nr.attracts), copy(nr.repels))
+                               copy(nr.attracts), copy(nr.repels),
+                               Vector{Tuple{Int,SVector{3,Float64}}}())
                     # Record axon direction so dendrites can enforce polarity
                     nr.axon_dir = dir_norm
                 end
@@ -399,7 +422,8 @@ function check_sprouting!(model, t_struct::Int,
             gc_pos, _ = reflect_at_bounds(pos + dir_norm * model.step_size, dir_norm, model.lo, model.hi)
             add_agent!(gc_pos, GrowthCone, model,
                        dir_norm, nid, ni, 0, false, 0, 0.0, false,
-                       copy(nr.attracts), copy(nr.repels))
+                       copy(nr.attracts), copy(nr.repels),
+                       Vector{Tuple{Int,SVector{3,Float64}}}())
             # Add to existing so next candidate respects this new cone's territory
             push!(existing, (dir_norm, model.step_size, false))
             added += 1
@@ -487,11 +511,16 @@ function check_branching!(model, active_cones::Vector{GrowthCone})
     end
 
     for b in new_branches
+        # Branched cones get an initial waypoint at their spawn position so
+        # check_retraction! has something to pop back to.
+        traj0 = Vector{Tuple{Int,SVector{3,Float64}}}()
+        push!(traj0, (model.t, b.pos))
         add_agent!(b.pos, GrowthCone, model,
                    rand_unit_vec3(model.rng),
                    b.neuron_id, b.neurite_idx, b.branch_idx,
                    b.is_axon, 0, 0.0, false,
-                   b.attracts, b.repels)
+                   b.attracts, b.repels,
+                   traj0)
     end
 end
 

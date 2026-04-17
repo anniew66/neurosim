@@ -122,6 +122,7 @@ function init_model(neurons::OrderedDict{String,NeuronRecord},
         :dyn_chem_buffer     => ChemSource[],
         :stream_channel       => nothing,   # set to a Channel when streaming
         :last_streamed_t      => 0,
+        :retraction_count     => 0,         # bumped each pop! in check_retraction!
     )
 
     model = StandardABM(Union{GrowthCone,Soma}, space;
@@ -155,7 +156,8 @@ function init_model(neurons::OrderedDict{String,NeuronRecord},
             add_agent!(gc_pos, GrowthCone, model,
                        init_dir, uid, ni, 0,
                        ns.is_axon, 0, 0.0, false,
-                       copy(nr.attracts), copy(nr.repels))
+                       copy(nr.attracts), copy(nr.repels),
+                       Vector{Tuple{Int,SVector{3,Float64}}}())
         end
     end
 
@@ -339,16 +341,34 @@ function build_stream_state(model)
             end
         end
     end
+    # Branched-cone segments live on the per-agent branch_trajectory.
+    for a in allagents(model)
+        a isa GrowthCone || continue
+        a.branch_idx == 0 && continue
+        a.retracted && continue
+        traj = a.branch_trajectory
+        length(traj) < 2 && continue
+        nidx = Float64(get(nid_to_idx, a.neuron_id, -1))
+        ax = a.is_axon ? 1 : 0
+        for wi in 1:(length(traj)-1)
+            t_step, p1 = traj[wi]
+            t_step <= last_t && continue
+            _, p2 = traj[wi+1]
+            push!(new_segs, [p1[1],p1[2],p1[3], p2[1],p2[2],p2[3],
+                             ax, nidx, Float64(t_step)])
+        end
+    end
     model.last_streamed_t = model.t
 
     syn_count = length(model.synapses)
 
-    Dict("t"      => model.t,
-         "somas"  => somas,
-         "cones"  => cones,
-         "segs"   => new_segs,
-         "syns"   => syn_count,
-         "extent" => model.hi[1])
+    Dict("t"         => model.t,
+         "somas"     => somas,
+         "cones"     => cones,
+         "segs"      => new_segs,
+         "syns"      => syn_count,
+         "extent"    => model.hi[1],
+         "retract_n" => model.retraction_count)
 end
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
@@ -399,6 +419,23 @@ function start_server(; host="0.0.0.0", port=8080)
                                              p2[1],p2[2],p2[3],
                                              ax, nidx, Float64(t_step)])
                         end
+                    end
+                end
+                # Branched-cone trajectories live on live GrowthCone agents.
+                for a in allagents(_current_model)
+                    a isa GrowthCone || continue
+                    a.branch_idx == 0 && continue
+                    a.retracted && continue
+                    traj = a.branch_trajectory
+                    length(traj) < 2 && continue
+                    nidx = Float64(get(nid_to_idx, a.neuron_id, -1))
+                    ax = a.is_axon ? 1 : 0
+                    for wi in 1:(length(traj)-1)
+                        t_step, p1 = traj[wi]
+                        _,      p2 = traj[wi+1]
+                        push!(all_segs, [p1[1],p1[2],p1[3],
+                                         p2[1],p2[2],p2[3],
+                                         ax, nidx, Float64(t_step)])
                     end
                 end
                 nid_map = Dict(uid[1:8] => nid_to_idx[uid] for uid in keys(all_neurons))
