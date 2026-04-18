@@ -528,6 +528,7 @@ end
 
 function check_synapse_formation!(model, active_cones::Vector{GrowthCone})
     r_syn = model.synapse_radius
+    formed_before = length(model.synapses)
     for agent in active_cones
         agent.is_axon            || continue
         agent.retracted          && continue
@@ -574,11 +575,22 @@ function check_synapse_formation!(model, active_cones::Vector{GrowthCone})
             end
         end
     end
+    n_new = length(model.synapses) - formed_before
+    n_new > 0 && println("  Formed $(n_new) provisional synapses")
 end
 
+# Allocation-free compatibility check. Previous implementation used
+# intersect(releases, attracts) which allocates a fresh vector per call,
+# and is called inside a tight nearby_agents loop — meaningful at scale.
 function is_compatible(axon_nr::NeuronRecord, dend_nr::NeuronRecord)::Bool
-    isempty(axon_nr.releases) || isempty(dend_nr.attracts) ||
-    !isempty(intersect(axon_nr.releases, dend_nr.attracts))
+    isempty(axon_nr.releases) && return true
+    isempty(dend_nr.attracts) && return true
+    @inbounds for a in axon_nr.releases
+        for b in dend_nr.attracts
+            a == b && return true
+        end
+    end
+    return false
 end
 
 function estimate_distance(gc::GrowthCone, model)::Float64
@@ -608,9 +620,6 @@ function form_synapse!(model, pre_gc, post_agent, is_axosomatic::Bool, dist::Flo
     # Register in lookup maps
     push!(get!(model.pre_synapses,  pre_gc.neuron_id, Int[]), syn_id)
     push!(get!(model.post_synapses, post_nid,          Int[]), syn_id)
-
-    println("  Provisional synapse $(syn_id): " *
-            "$(pre_gc.neuron_id[1:8])→$(post_nid[1:8]) d=$(round(dist,digits=3))mm")
 end
 
 # ── Synapse pruning ────────────────────────────────────────────────────────────
@@ -628,18 +637,34 @@ function prune_synapses!(model)
         end
     end
 
-    for sid in to_prune
-        syn = model.synapses[sid]
-        # Decrement n_synapses on presynaptic GrowthCone if still alive
-        if hasid(model, syn.pre_gc_id)
-            gc = model[syn.pre_gc_id]
-            gc isa GrowthCone && (gc.n_synapses = max(0, gc.n_synapses - 1))
+    # Batch pruning: group affected neurons, then do one filter! per neuron
+    # using Set membership (O(1) per check) instead of per-synapse linear scans.
+    # Previously O(S²) worst case; now O(S).
+    if !isempty(to_prune)
+        prune_set    = Set(to_prune)
+        affected_pre  = Set{String}()
+        affected_post = Set{String}()
+        for sid in to_prune
+            syn = model.synapses[sid]
+            if hasid(model, syn.pre_gc_id)
+                gc = model[syn.pre_gc_id]
+                gc isa GrowthCone && (gc.n_synapses = max(0, gc.n_synapses - 1))
+            end
+            push!(affected_pre,  syn.pre_neuron_id)
+            push!(affected_post, syn.post_neuron_id)
+            delete!(model.synapses, sid)
         end
-        delete!(model.synapses, sid)
-        # Remove from lookup maps
-        filter!(s -> s != sid, get(model.pre_synapses,  syn.pre_neuron_id, Int[]))
-        filter!(s -> s != sid, get(model.post_synapses, syn.post_neuron_id, Int[]))
-        println("  Pruned synapse $(sid)")
+        for nid in affected_pre
+            v = get(model.pre_synapses, nid, nothing)
+            v === nothing && continue
+            filter!(s -> !(s in prune_set), v)
+        end
+        for nid in affected_post
+            v = get(model.post_synapses, nid, nothing)
+            v === nothing && continue
+            filter!(s -> !(s in prune_set), v)
+        end
+        println("  Pruned $(length(to_prune)) weak synapses")
     end
 
     # Update stable synapse count on somas
@@ -708,10 +733,20 @@ function remove_neuron!(model, nid::String)
     delete!(model.neurons, nid)
     delete!(model.soma_agent_ids, nid)
     delete!(model.neuron_elec, nid)
-    # Remove all synapses involving this neuron
-    dead_syns = [sid for (sid, syn) in model.synapses
-                 if syn.pre_neuron_id == nid || syn.post_neuron_id == nid]
-    for sid in dead_syns
+    # Remove all synapses involving this neuron.
+    # Use the pre/post lookup maps (already indexed) instead of scanning the
+    # full synapse dict. O(deg(nid)) instead of O(total synapses).
+    dead_set = Set{Int}()
+    for sid in get(model.pre_synapses,  nid, Int[]); push!(dead_set, sid); end
+    for sid in get(model.post_synapses, nid, Int[]); push!(dead_set, sid); end
+    for sid in dead_set
+        syn = get(model.synapses, sid, nothing)
+        syn === nothing && continue
+        # Scrub the "other side" lookup map so dangling ids don't accumulate
+        other_nid = syn.pre_neuron_id == nid ? syn.post_neuron_id : syn.pre_neuron_id
+        other_map = syn.pre_neuron_id == nid ? model.post_synapses : model.pre_synapses
+        v = get(other_map, other_nid, nothing)
+        v !== nothing && filter!(s -> s != sid, v)
         delete!(model.synapses, sid)
     end
     delete!(model.pre_synapses, nid)

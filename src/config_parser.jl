@@ -45,21 +45,35 @@ function net_chemical_gradient(x, attracts, repels, sources)
     #   - very close sources don't dominate with infinite pull
     #   - the signal decays naturally with distance
     #   - multiple distributed sources produce a balanced field
+    #
+    # Dynamic chem sources scale with N (one per active releasing neuron), and
+    # this function is called per growth cone per structural step.  Without a
+    # cutoff the inner cost is O(G×|sources|) with expensive exp/sqrt per pair.
+    # A Gaussian source with sigma σ has negligible gradient magnitude beyond
+    # ~4σ (exp(-8) ≈ 3.4e-4), so we early-exit using squared distance and skip
+    # the trig/transcendental work for faraway sources.
     g = SVector{3,Float64}(0,0,0)
     for s in sources
-        s.name in attracts || s.name in repels || continue
-        d    = x - s.pos
-        dist = sqrt(dot(d, d))
-        dist < 1e-9 && continue   # exactly at source — no gradient
+        attracts_src = s.name in attracts
+        repels_src   = s.name in repels
+        (attracts_src || repels_src) || continue
+
+        d     = x - s.pos
+        dist2 = dot(d, d)
+        # Cutoff at (4σ)² — contributions beyond this are below 1e-3 after tanh.
+        cutoff2 = 16.0 * s.sigma * s.sigma
+        dist2 > cutoff2 && continue
+        dist2 < 1e-18 && continue   # exactly at source — no gradient
+
+        dist  = sqrt(dist2)
         d_hat = d / dist
 
         # Gradient magnitude of Gaussian: peaks at dist=sigma, tanh-saturated
-        raw_g = s.strength * (dist / s.sigma^2) * exp(-dist^2 / (2*s.sigma^2))
-        # Saturation: prevents near-source oscillation and single-source dominance
+        raw_g = s.strength * (dist / (s.sigma * s.sigma)) * exp(-dist2 / (2 * s.sigma * s.sigma))
         sat_g = tanh(raw_g * 2.0)
 
         dir = sat_g * (-d_hat)   # point toward source
-        g   = g + (s.name in attracts ? dir : -dir)
+        g   = g + (attracts_src ? dir : -dir)
     end
     g
 end
